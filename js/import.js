@@ -2,7 +2,7 @@
 import { state, wert, setzeFakt, speicherePerson, neuePerson, feldDef, speichereFelder, speichereIgnorieren } from './store.js';
 import { h, toast, normTelefon, telefonGleich, parseWert, gleich, formatWert, heute, geheZu, neuZeichnen } from './util.js';
 import { feldBearbeitenDialog } from './felder.js';
-import { erkenne, istBlock, istIgnoriert } from './erkennung.js';
+import { erkenne, istBlock, istIgnoriert, richtungFuer } from './erkennung.js';
 import { plattformAuswahl, plattformVorschlag } from './plattform.js';
 import { fotoHinzufuegen, bilderAusEinfuegen, bilderAusZwischenablage } from './fotos.js';
 
@@ -296,7 +296,7 @@ export function einfuegenBox(p, { gross = false } = {}) {
     if (!text.trim()) { toast('Bitte zuerst Text einfügen'); return; }
     let roh;
     try {
-      roh = istBlock(text) ? parseBlock(text)[0] : erkenne(text);
+      roh = istBlock(text) ? parseBlock(text)[0] : erkenne(text, { richtung: richtungFuer(p.plattform) });
     } catch (e) {
       ergebnis.replaceChildren(h('p', { class: 'fehler' }, 'Konnte den Text nicht lesen: ' + e.message));
       return;
@@ -381,7 +381,7 @@ export function zeigeImport(main) {
       }
     } else {
       // Rohtext: Fakten direkt in der App heraussuchen (offline)
-      const p = erkenne(ta.value);
+      const p = erkenne(ta.value, { richtung: richtungFuer(plattformVorschlag(ta.value)) });
       const n = Object.keys(p.fakten).length;
       art = n ? `Automatisch erkannt: ${n} Angabe(n). Bitte prüfen – was fehlt, kannst du später in der Person ergänzen.` : 'Im Text wurden keine bekannten Angaben gefunden.';
       if (p.eigeneZeilen) art += ` ${p.eigeneZeilen} Zeile(n) von dir wurden ignoriert.`;

@@ -6,21 +6,31 @@ import { parseWert, digits } from './util.js';
 // Beschriftungen auf Profilseiten → Feld-Schlüssel
 const BESCHRIFTUNGEN = {
   nickname: ['name', 'nickname', 'nick', 'username', 'user name', 'display name', 'spitzname', 'benutzername', 'rufname'],
-  alter: ['age', 'alter', 'my age'],
-  groesse: ['height', 'größe', 'groesse', 'körpergröße', 'koerpergroesse', 'body height', 'how tall'],
-  gewicht: ['weight', 'gewicht', 'body weight', 'körpergewicht'],
-  job: ['job', 'occupation', 'profession', 'work', 'job title', 'career', 'beruf', 'tätigkeit', 'taetigkeit', 'arbeit'],
-  wohnort: ['location', 'lives in', 'living in', 'city', 'residence', 'current city', 'hometown', 'wohnort', 'ort', 'stadt', 'wohnt in', 'province', 'region'],
-  kinder: ['children', 'kids', 'child', 'have children', 'has children', 'have kids', 'has kids', 'kinder', 'kids at home'],
-  single: ['relationship status', 'relationship', 'marital status', 'status', 'beziehungsstatus', 'familienstand'],
-  single_seit: ['single since', 'single for', 'single seit'],
+  alter: ['age', 'alter', 'my age', 'how old are you'],
+  groesse: ['height', 'größe', 'groesse', 'körpergröße', 'koerpergroesse', 'body height', 'how tall', 'how tall are you', 'my height'],
+  gewicht: ['weight', 'gewicht', 'body weight', 'körpergewicht', 'my weight', 'how much do you weigh'],
+  job: ['job', 'occupation', 'profession', 'work', 'job title', 'career', 'beruf', 'tätigkeit', 'taetigkeit', 'arbeit', 'what do you do', 'my job', 'employment'],
+  wohnort: ['location', 'lives in', 'living in', 'city', 'residence', 'current city', 'hometown', 'wohnort', 'ort', 'stadt', 'wohnt in', 'province', 'region', 'where do you live', 'i live in', 'living'],
+  kinder: ['children', 'kids', 'child', 'have children', 'has children', 'have kids', 'has kids', 'kinder', 'kids at home',
+    'do you have children', 'do you have kids', 'do you have any children', 'do you have any kids', 'children at home', 'number of children', 'hast du kinder'],
+  single: ['relationship status', 'relationship', 'marital status', 'status', 'beziehungsstatus', 'familienstand', 'are you single', 'bist du single'],
+  single_seit: ['single since', 'single for', 'single seit', 'how long have you been single', 'how long single'],
   handy: ['phone', 'mobile', 'tel', 'telephone', 'phone number', 'mobile number', 'whatsapp', 'whatsapp number', 'handy', 'telefon', 'handynummer', 'mobil'],
   line_id: ['line', 'line id', 'lineid', 'line-id'],
 };
 
 const ZAHLWOERTER = { no: 0, none: 0, keine: 0, kein: 0, one: 1, a: 1, an: 1, ein: 1, eine: 1, einen: 1, eins: 1, two: 2, zwei: 2, three: 3, drei: 3, four: 4, vier: 4, five: 5, fünf: 5, half: 0.5 };
 
-const norm = s => String(s).toLowerCase().replace(/[*_#•·]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/[:：=]$/, '').trim();
+// Kleinbuchstaben, Sonderzeichen weg, „?“/„:“ am Ende weg („Have children?“ → „have children“)
+const norm = s => String(s).toLowerCase().replace(/[*_#•·]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/[\s:：=?？]+$/, '').trim();
+
+/** Wo steht bei dieser Plattform die Antwort? ThaiFriendly: über der Frage, Tinder: darunter. */
+export function richtungFuer(plattform) {
+  const p = String(plattform || '').toLowerCase().replace(/[\s\-_.]+/g, '');
+  if (p.includes('thaifriendly')) return 'oben';
+  if (p.includes('tinder')) return 'unten';
+  return null;
+}
 
 /** Soll diese Angabe/Beschriftung laut „Immer ignorieren“-Liste übersprungen werden? */
 export function istIgnoriert(text) {
@@ -146,7 +156,7 @@ function deuten(key, v, mitLabel) {
 // ---------- Hauptfunktion ----------
 
 /** Liefert eine Person im Format { nickname, fakten:{key:{wert,beleg}}, kontakt:{whatsapp}, sonstiges:[] }. */
-export function erkenne(text) {
+export function erkenne(text, optionen = {}) {
   const fakten = {};
   const sonstiges = [];
   let nickname = '';
@@ -165,16 +175,59 @@ export function erkenne(text) {
   text = zeilen.join('\n');
 
   // 1) „Beschriftung: Wert“ (oder Beschriftung in einer Zeile, Wert in der nächsten)
+  // Steht die Antwort über (ThaiFriendly) oder unter (Tinder) der Frage? Plattform bekannt → festgelegt, sonst ausprobieren.
+  // Antwort darf selbst wie ein Feldname aussehen, wenn sie zu derselben Frage passt (Antwort „Single“ auf „Relationship status“)
+  const passt = (key, s) => {
+    if (!s || s.length > 80 || /[:：]/.test(s) || /[?？]\s*$/.test(s)) return false;
+    const k = labelZuKey(s);
+    if (k && k !== key) return false;
+    return deuten(key, s, true) != null;
+  };
+  let richtung = optionen.richtung;
+  if (richtung !== 'oben' && richtung !== 'unten') {
+    let oben = 0, unten = 0;
+    zeilen.forEach((z, i) => {
+      const key = z.length <= 45 && labelZuKey(z);
+      if (!key || key === 'nickname') return;
+      const o = passt(key, zeilen[i - 1]), u = passt(key, zeilen[i + 1]);
+      if (o && !u) oben++;
+      if (u && !o) unten++;
+    });
+    richtung = oben > unten ? 'oben' : 'unten';
+  }
+
   const paare = [];
+  const verbraucht = new Set();
   for (let i = 0; i < zeilen.length; i++) {
+    if (verbraucht.has(i)) continue;
     const z = zeilen[i];
     const m = z.match(/^([^:：=\t]{1,30}?)\s*[:：=\t]\s*(.{1,150})$/);
     if (m && /\p{L}/u.test(m[1]) && !/^(https?|www)$/i.test(m[1].trim())) {
       paare.push({ label: m[1].trim(), wert: m[2].trim(), zeile: z });
-    } else if (i + 1 < zeilen.length && z.length <= 30 && labelZuKey(z) && zeilen[i + 1].length <= 80 && !labelZuKey(zeilen[i + 1])) {
-      paare.push({ label: z.replace(/[:：]$/, '').trim(), wert: zeilen[i + 1], zeile: `${z} ${zeilen[i + 1]}` });
-      i++;
+      continue;
     }
+    const key = z.length <= 45 && labelZuKey(z);
+    const vorI = i - 1, nachI = i + 1;
+    if (!key) {
+      // Unbekannte Frage („Do you smoke?“): mit ihrer Antwort anzeigen, damit du entscheiden kannst
+      if (/[?？]\s*$/.test(z) && z.length <= 60) {
+        const kurzOk = j => j >= 0 && j < zeilen.length && !verbraucht.has(j) && zeilen[j].length <= 40
+          && !/[:：]/.test(zeilen[j]) && !/[?？]\s*$/.test(zeilen[j]) && !labelZuKey(zeilen[j]);
+        const j = richtung === 'oben' ? (kurzOk(vorI) ? vorI : -1) : (kurzOk(nachI) ? nachI : -1);
+        if (j >= 0) {
+          verbraucht.add(j);
+          paare.push({ label: z.replace(/[\s?？]+$/, '').trim(), wert: zeilen[j], zeile: `${z} ${zeilen[j]}` });
+        }
+      }
+      continue;
+    }
+    const vorOk = vorI >= 0 && !verbraucht.has(vorI) && passt(key, zeilen[vorI]);
+    const nachOk = nachI < zeilen.length && passt(key, zeilen[nachI]);
+    const wahl = richtung === 'oben' ? (vorOk ? vorI : nachOk ? nachI : -1) : (nachOk ? nachI : vorOk ? vorI : -1);
+    if (wahl < 0) continue;
+    verbraucht.add(wahl);
+    const label = z.replace(/[\s:：?？]+$/, '').trim();
+    paare.push({ label, wert: zeilen[wahl], zeile: wahl < i ? `${zeilen[wahl]} (${z})` : `${z} ${zeilen[wahl]}` });
   }
   // Beschriftungen, die mehrfach vorkommen, sind meist Chat-Namen („Mai: hi“) – nicht als Angabe werten
   const anzahl = {};
