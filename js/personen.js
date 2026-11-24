@@ -2,7 +2,7 @@
 import { state, wert, setzeFakt, speicherePerson, loeschePerson, neuePerson, fortschritt, feldDef } from './store.js';
 import { h, toast, copyText, digits, neuZeichnen, geheZu, formatWert, heute, datumDE } from './util.js';
 import { dialog, bestaetigen, feldEingabe } from './dialoge.js';
-import { fotoHinzufuegen, vorschauUrl, grossUrl, fotoLoeschen, bilderAusEinfuegen, bilderAusZwischenablage } from './fotos.js';
+import { fotoHinzufuegen, vorschauUrl, grossUrl, fotoLoeschen, bilderAusEinfuegen, bilderAusZwischenablage, ausschnitt, ausschnittAnwenden } from './fotos.js';
 import { plattformAuswahl } from './plattform.js';
 import { ORTE, REGIONEN, ortVon, entfernung, streckeZu, streckeText, km, kmText, ortNachName, standortSetzen, gpsAbfragen } from './orte.js';
 import { ortEingabe } from './dialoge.js';
@@ -84,14 +84,67 @@ async function ortZuordnen(p, speichern) {
 }
 let sortierung = 'nickname';
 
-function bildOderPlatzhalter(p, klasse) {
+/** Hauptfoto im Hochformat-Rahmen (gross = volle Auflösung für die Personenseite). */
+function bildOderPlatzhalter(p, klasse, gross = false) {
   const box = h('div', { class: klasse }, (p.nickname || '?').charAt(0).toUpperCase());
   if (p.hauptfoto) {
-    vorschauUrl(p.hauptfoto).then(u => {
-      if (u) box.replaceChildren(h('img', { src: u, alt: '' }));
+    const id = p.hauptfoto;
+    (gross ? grossUrl(id) : vorschauUrl(id)).then(u => {
+      if (!u) return;
+      const img = h('img', { src: u, alt: '' });
+      ausschnittAnwenden(img, ausschnitt(p, id));
+      box.replaceChildren(img);
     });
   }
   return box;
+}
+
+/** Ausschnitt eines Fotos verschieben (ziehen) und zoomen. */
+async function ausschnittDialog(p, id, speichern) {
+  const url = await grossUrl(id);
+  if (!url) return;
+  const a = { ...ausschnitt(p, id) };
+  const img = h('img', { src: url, alt: '', draggable: 'false' });
+  const rahmen = h('div', { class: 'rahmen' }, img);
+  const zoom = h('input', { type: 'range', min: '1', max: '3', step: '0.05', value: String(a.z) });
+  const zeigen = () => ausschnittAnwenden(img, a);
+  zeigen();
+  zoom.addEventListener('input', () => { a.z = Number(zoom.value); zeigen(); });
+
+  // Ziehen mit Maus oder Finger: Bild folgt der Bewegung
+  let start = null;
+  rahmen.addEventListener('pointerdown', e => {
+    e.preventDefault();   // kein Text markieren / Bild „wegziehen“
+    start = { px: e.clientX, py: e.clientY, x: a.x, y: a.y };
+    try { rahmen.setPointerCapture(e.pointerId); } catch { /* egal */ }
+  });
+  rahmen.addEventListener('pointermove', e => {
+    if (!start) return;
+    const w = rahmen.clientWidth, hgt = rahmen.clientHeight;
+    const f = 1.6 / a.z;   // Empfindlichkeit
+    a.x = Math.min(100, Math.max(0, start.x - (e.clientX - start.px) / w * 100 * f));
+    a.y = Math.min(100, Math.max(0, start.y - (e.clientY - start.py) / hgt * 100 * f));
+    zeigen();
+  });
+  const ende = () => { start = null; };
+  rahmen.addEventListener('pointerup', ende);
+  rahmen.addEventListener('pointercancel', ende);
+
+  const r = await dialog('Ausschnitt anpassen', [
+    h('p', { class: 'leise klein' }, 'Bild mit Maus oder Finger verschieben, mit dem Regler vergrößern. So erscheint es in der Übersicht und oben in der Person.'),
+    rahmen,
+    h('label', {}, 'Zoom', zoom),
+  ], [
+    { text: 'Zurücksetzen', wert: 'reset' },
+    { text: 'Abbrechen', wert: null },
+    { text: 'Speichern', wert: 'ok', klasse: 'primaer' },
+  ]);
+  URL.revokeObjectURL(url);
+  if (!r) return;
+  p.fotoAusschnitt ||= {};
+  if (r === 'reset') delete p.fotoAusschnitt[id];
+  else p.fotoAusschnitt[id] = { x: Math.round(a.x), y: Math.round(a.y), z: Math.round(a.z * 100) / 100 };
+  await speichern();
 }
 
 // ---------------- Übersicht ----------------
@@ -254,7 +307,14 @@ export async function zeigePerson(main, id) {
 
   // Kopf
   const kopf = h('div', { class: 'person-kopf' },
-    bildOderPlatzhalter(p, 'hauptbild'),
+    (() => {
+      const b = bildOderPlatzhalter(p, 'hauptbild', true);
+      if (p.hauptfoto) {
+        b.title = 'Antippen: Foto ansehen / Ausschnitt anpassen';
+        b.addEventListener('click', () => fotoAnsicht(p, p.hauptfoto, speichern));
+      }
+      return b;
+    })(),
     h('div', { style: 'flex:1;min-width:200px' },
       h('h1', {}, p.nickname || '(ohne Nickname)'),
       p.name && h('div', { class: 'leise' }, p.name),
@@ -394,6 +454,7 @@ function fotoBox(p, speichern) {
   const galerie = h('div', { class: 'galerie' });
   for (const id of p.fotos) {
     const img = h('img', { alt: '' });
+    ausschnittAnwenden(img, ausschnitt(p, id));
     vorschauUrl(id).then(u => { if (u) img.src = u; });
     galerie.append(h('button', { type: 'button', class: 'foto' + (id === p.hauptfoto ? ' haupt' : ''), onclick: () => fotoAnsicht(p, id, speichern) },
       img, id === p.hauptfoto && h('span', { class: 'badge' }, 'Hauptfoto')));
@@ -443,10 +504,12 @@ async function fotoAnsicht(p, id, speichern) {
   const url = await grossUrl(id);
   const r = await dialog('Foto', h('img', { class: 'gross', src: url || '', alt: '' }), [
     { text: 'Löschen', wert: 'loeschen', klasse: 'gefahr' },
+    { text: '✂ Ausschnitt anpassen', wert: 'ausschnitt' },
     id !== p.hauptfoto && { text: 'Als Hauptfoto', wert: 'haupt' },
     { text: 'Schließen', wert: null, klasse: 'primaer' },
   ].filter(Boolean));
   if (url) URL.revokeObjectURL(url);
+  if (r === 'ausschnitt') await ausschnittDialog(p, id, speichern);
   if (r === 'haupt') { p.hauptfoto = id; await speichern(); }
   if (r === 'loeschen' && await bestaetigen('Dieses Foto endgültig löschen?', 'Löschen')) {
     await fotoLoeschen(p, id);

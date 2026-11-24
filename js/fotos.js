@@ -30,6 +30,21 @@ function verkleinern(bmp, max, qualitaet) {
   return new Promise((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('Bild konnte nicht umgewandelt werden'))), 'image/jpeg', qualitaet));
 }
 
+// ---------- Bildausschnitt (pro Foto: Position x/y in %, Zoom z) ----------
+
+/** Standard: Mitte waagrecht, eher oben (da ist meist der Kopf). */
+export function ausschnitt(p, id) {
+  return { x: 50, y: 25, z: 1, ...(p.fotoAusschnitt?.[id] || {}) };
+}
+
+/** Ausschnitt auf ein <img> anwenden (Bild füllt seinen Rahmen, Rahmen schneidet ab). */
+export function ausschnittAnwenden(img, a) {
+  img.style.objectFit = 'cover';
+  img.style.objectPosition = `${a.x}% ${a.y}%`;
+  img.style.transformOrigin = `${a.x}% ${a.y}%`;
+  img.style.transform = a.z > 1 ? `scale(${a.z})` : '';
+}
+
 /** Bilder aus einem Einfüge-Ereignis (Strg+V) holen. */
 export function bilderAusEinfuegen(e) {
   const dateien = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'));
