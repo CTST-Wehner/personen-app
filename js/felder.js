@@ -1,7 +1,28 @@
 // Seite „Felder“: Felder anlegen/ändern/sortieren und Projekt-Anweisung für Claude erzeugen.
-import { state, speichereFelder, speicherePerson, speicherePlattformen, speichereEigeneNamen, speichereIgnorieren, TYPEN, FEST, STANDARD_FELDER } from './store.js';
+import { state, speichereFelder, speicherePerson, speicherePlattformen, speichereEigeneNamen, speichereIgnorieren, speichereMeineFakten, TYPEN, FEST, STANDARD_FELDER } from './store.js';
 import { h, toast, copyText, slug } from './util.js';
-import { dialog, bestaetigen, eingabe } from './dialoge.js';
+import { dialog, bestaetigen, eingabe, feldEingabe } from './dialoge.js';
+
+/** Box „Meine eigenen Angaben“: deine Fakten – werden beim Einfügen nicht der anderen Person zugeordnet. Privat. */
+function meineFaktenBox() {
+  const felder = state.felder.filter(f => !['handy', 'line_id'].includes(f.key));
+  const eingaben = felder.map(f => ({ f, e: feldEingabe(f, state.meineFakten[f.key]) }));
+  const speichern = async () => {
+    const neu = {};
+    for (const { f, e } of eingaben) { const v = e.lesen(); if (v !== null && v !== '') neu[f.key] = v; }
+    state.meineFakten = neu;
+    await speichereMeineFakten();
+    toast('Deine Angaben sind gespeichert');
+  };
+  return h('div', { class: 'box' },
+    h('h2', {}, '🙋 Meine eigenen Angaben'),
+    h('p', { class: 'leise klein' }, 'Deine eigenen Fakten. Findet die App sie beim Einfügen (z. B. weil sie zurückgefragt hat und du geantwortet hast), werden sie nicht der anderen Person zugeordnet. Bleibt privat: nur auf deinen Geräten und verschlüsselt in Drive – nicht im Programm.'),
+    h('details', {},
+      h('summary', {}, Object.keys(state.meineFakten).length ? `${Object.keys(state.meineFakten).length} Angabe(n) eingetragen – bearbeiten` : 'Jetzt eintragen'),
+      h('div', { style: 'margin-top:12px' },
+        eingaben.map(({ f, e }) => h('label', {}, f.label, e.el)),
+        h('button', { class: 'primaer', onclick: speichern }, 'Speichern'))));
+}
 
 /** Box „Immer ignoriert“: Angaben, die beim Einfügen nicht mehr angezeigt werden. */
 function ignoriertBox() {
@@ -266,6 +287,7 @@ export function zeigeFelder(main) {
         h('button', { class: 'primaer', onclick: neu }, '+ Feld hinzufügen'),
         h('button', { onclick: standardHolen }, 'Fehlende Standardfelder zurückholen'))),
     eigeneNamenBox(),
+    meineFaktenBox(),
     ignoriertBox(),
     plattformBox(),
     h('div', { class: 'box' },

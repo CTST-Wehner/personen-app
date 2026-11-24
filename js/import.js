@@ -2,7 +2,7 @@
 import { state, wert, setzeFakt, speicherePerson, neuePerson, feldDef, speichereFelder, speichereIgnorieren } from './store.js';
 import { h, toast, normTelefon, telefonGleich, parseWert, gleich, formatWert, heute, geheZu, neuZeichnen } from './util.js';
 import { feldBearbeitenDialog } from './felder.js';
-import { erkenne, istBlock, istIgnoriert, richtungFuer } from './erkennung.js';
+import { erkenne, istBlock, istIgnoriert, richtungFuer, eigeneAngabeArt } from './erkennung.js';
 import { plattformAuswahl, plattformVorschlag } from './plattform.js';
 import { fotoHinzufuegen, bilderAusEinfuegen, bilderAusZwischenablage } from './fotos.js';
 
@@ -184,9 +184,13 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '', festeZielId = null) {
           : h('span', { class: 'leise' }, formatWert(f, a))));
         continue;
       }
+      // Stimmt der Wert mit deinen eigenen Angaben überein? Dann nicht vorausgewählt.
+      const eigen = eigeneAngabeArt(f.key, n.wert);
+      const eigenHinweis = eigen && h('div', { class: 'warn klein' },
+        eigen === 'sicher' ? '⚠️ Entspricht deiner eigenen Angabe – stammt wohl von dir.' : '⚠️ Gleich wie deine eigene Angabe – prüfen, ob das von dir stammt.');
       if (a === null) {
-        const cb = h('input', { type: 'checkbox', checked: true });
-        inhalt.append(zeile(f.label, h('div', {}, h('label', { class: 'haken' }, cb, h('span', { class: 'neu' }, '✅ neu: '), formatWert(f, n.wert)), belegEl(n))));
+        const cb = h('input', { type: 'checkbox', checked: !eigen });
+        inhalt.append(zeile(f.label, h('div', {}, h('label', { class: 'haken' }, cb, h('span', { class: eigen ? 'warn' : 'neu' }, eigen ? 'neu? ' : '✅ neu: '), formatWert(f, n.wert)), eigenHinweis, belegEl(n))));
         aktionen.push(p => { if (cb.checked) setzeFakt(p, f.key, n.wert, n.beleg); });
       } else if (gleich(f.typ, a, n.wert)) {
         inhalt.append(zeile(f.label, h('div', {}, h('span', { class: 'neu' }, '✅ schon vorhanden: '), formatWert(f, a))));
@@ -199,6 +203,7 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '', festeZielId = null) {
           h('div', { class: 'warn' }, '⚠️ Widerspruch – bitte wählen:'),
           h('label', { class: 'haken' }, rAlt, 'bisher: ', formatWert(f, a)),
           h('label', { class: 'haken' }, rNeu, 'neu: ', formatWert(f, n.wert)),
+          eigenHinweis,
           belegEl(n))));
         aktionen.push(p => { if (rNeu.checked) setzeFakt(p, f.key, n.wert, n.beleg); });
       }
@@ -384,7 +389,7 @@ export function zeigeImport(main) {
       const p = erkenne(ta.value, { richtung: richtungFuer(plattformVorschlag(ta.value)) });
       const n = Object.keys(p.fakten).length;
       art = n ? `Automatisch erkannt: ${n} Angabe(n). Bitte prüfen – was fehlt, kannst du später in der Person ergänzen.` : 'Im Text wurden keine bekannten Angaben gefunden.';
-      if (p.eigeneZeilen) art += ` ${p.eigeneZeilen} Zeile(n) von dir wurden ignoriert.`;
+      if (p.eigeneZeilen) art += ` ${p.eigeneZeilen} Zeile(n)/Angabe(n) von dir wurden ignoriert.`;
       else if (!state.eigeneNamen.length) art += ' Tipp: Unter „Felder → Meine Namen“ deinen Benutzernamen eintragen, damit deine eigenen Nachrichten nicht mit ausgewertet werden.';
       liste = [p];
     }

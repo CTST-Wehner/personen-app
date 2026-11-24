@@ -1,7 +1,7 @@
 // Offline-Erkennung: zieht Fakten aus hineinkopiertem Text (Profilseite, Chat, Notizen) – Englisch und Deutsch.
 // Läuft komplett im Browser, nichts wird verschickt. Ergebnis hat dasselbe Format wie der Claude-Block.
 import { state, feldDef } from './store.js';
-import { parseWert, digits } from './util.js';
+import { parseWert, digits, gleich } from './util.js';
 
 // Beschriftungen auf Profilseiten → Feld-Schlüssel
 const BESCHRIFTUNGEN = {
@@ -23,6 +23,24 @@ const ZAHLWOERTER = { no: 0, none: 0, keine: 0, kein: 0, one: 1, a: 1, an: 1, ei
 
 // Kleinbuchstaben, Sonderzeichen weg, „?“/„:“ am Ende weg („Have children?“ → „have children“)
 const norm = s => String(s).toLowerCase().replace(/[*_#•·]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/[\s:：=?？]+$/, '').trim();
+
+/**
+ * Stimmt ein gefundener Wert mit deinen eigenen Angaben („Meine eigenen Angaben“) überein?
+ *  'sicher'   – Text/Ort stimmt überein (z. B. dein Job) → stammt von dir
+ *  'moeglich' – Zahl genau gleich (Alter, Größe, Gewicht) → könnte von dir sein
+ *  null       – keine Übereinstimmung (Kinder/Ja-Nein werden nicht verglichen, das wäre zu oft zufällig gleich)
+ */
+export function eigeneAngabeArt(key, wert) {
+  const eigen = state.meineFakten?.[key];
+  if (eigen === undefined || eigen === null || eigen === '' || wert === null || wert === undefined || wert === '') return null;
+  const typ = feldDef(key)?.typ || 'text';
+  if (typ === 'text' || typ === 'ort') {
+    const a = norm(eigen), b = norm(wert);
+    return a === b || (a.length >= 4 && b.includes(a)) || (b.length >= 4 && a.includes(b)) ? 'sicher' : null;
+  }
+  if (typ === 'zahl' && key !== 'kinder') return gleich('zahl', eigen, wert) ? 'moeglich' : null;
+  return null;
+}
 
 /** Wo steht bei dieser Plattform die Antwort? ThaiFriendly: über der Frage, Tinder: darunter. */
 export function richtungFuer(plattform) {
@@ -162,9 +180,12 @@ export function erkenne(text, optionen = {}) {
   let nickname = '';
   let whatsapp = false;
 
+  let eigeneWerte = 0;
+  // Liefert true (gesetzt/schon vorhanden), false (kein Wert) oder 'eigen' (ist deine eigene Angabe → ausgelassen)
   const setze = (key, wert, beleg) => {
     if (wert === null || wert === undefined || wert === '') return false;
     if (key === 'nickname') { nickname ||= String(wert); return true; }
+    if (eigeneAngabeArt(key, wert) === 'sicher') { eigeneWerte++; return 'eigen'; }
     if (!fakten[key]) fakten[key] = { wert, beleg: kurz(beleg) };
     return true;
   };
@@ -244,27 +265,40 @@ export function erkenne(text, optionen = {}) {
   }
 
   // 2) Fließtext (Chats, Beschreibungen)
-  const saetze = zeilen.flatMap(z => z.split(/(?<=[.!?])\s+/)).filter(Boolean);
+  // Sätze, in denen deine eigenen Angaben stehen (z. B. dein Job), handeln von dir → nicht auswerten
+  const eigeneTexte = Object.entries(state.meineFakten || {})
+    .filter(([k, v]) => ['text', 'ort'].includes(feldDef(k)?.typ || 'text') && v && norm(v).length >= 4)
+    .map(([, v]) => norm(v));
+  const alleSaetze = zeilen.flatMap(z => z.split(/(?<=[.!?])\s+/)).filter(Boolean);
+  const saetze = alleSaetze.filter(s => !eigeneTexte.some(t => norm(s).includes(t)));
+  const eigeneSaetze = alleSaetze.length - saetze.length;
   const suche = re => { for (const s of saetze) { const m = s.match(re); if (m) return { m, s }; } return null; };
   let r;
 
   if (!fakten.alter) {
-    r = suche(/\b(?:i'?m|i am|ich bin|aged?)\s*:?\s*(\d{2})\b(?!\s*(?:cm|kg|kilo|lbs?|%|\$|€|k\b|baht|thb|euro|usd|minutes?|min\b|km|m\b|years? ago|(?:years?|y)[\s-]*old\s+(?:son|daughter|kid|child|boy|girl)))/i)
-      || suche(/\b(\d{2})\s*(?:years?\s*old|yrs?\s*old|y\.?\s?o\.?\b|jahre\s*alt)(?!\s+(?:son|daughter|kid|child|boy|girl|sohn|tochter))/i);
-    if (r) { const n = +r.m[1]; if (n >= 18 && n <= 99) setze('alter', n, r.s); }
+    const muster = [
+      /\b(?:i'?m|i am|ich bin|aged?)\s*:?\s*(\d{2})\b(?!\s*(?:cm|kg|kilo|lbs?|%|\$|€|k\b|baht|thb|euro|usd|minutes?|min\b|km|m\b|years? ago|(?:years?|y)[\s-]*old\s+(?:son|daughter|kid|child|boy|girl)))/i,
+      /\b(\d{2})\s*(?:years?\s*old|yrs?\s*old|y\.?\s?o\.?\b|jahre\s*alt)(?!\s+(?:son|daughter|kid|child|boy|girl|sohn|tochter))/i,
+    ];
+    aussen: for (const re of muster) {
+      for (const s of saetze) {
+        const m = s.match(re);
+        if (m && +m[1] >= 18 && +m[1] <= 99 && setze('alter', +m[1], s) === true) break aussen;
+      }
+    }
   }
   if (!fakten.groesse) {
     for (const s of saetze) {
       if (!/(\d\s*cm\b|\d\s*m\b|tall|height|groß|gross|\d\s*(?:ft|feet|'|’|′))/i.test(s)) continue;
       const g = groesse(s, true);
-      if (g && g >= 120 && g <= 220) { setze('groesse', g, s); break; }
+      if (g && g >= 120 && g <= 220 && setze('groesse', g, s) === true) break;
     }
   }
   if (!fakten.gewicht) {
     for (const s of saetze) {
       if (!/(kg|kilo|lbs?|pounds?|weigh|wiege|gewicht)/i.test(s)) continue;
       const g = gewicht(s, true);
-      if (g && g >= 30 && g <= 200) { setze('gewicht', g, s); break; }
+      if (g && g >= 30 && g <= 200 && setze('gewicht', g, s) === true) break;
     }
   }
   if (!fakten.kinder) {
@@ -345,7 +379,7 @@ export function erkenne(text, optionen = {}) {
     if (n >= 18 && n <= 99) setze('alter', n, nameAlter[0]);
   }
 
-  return { nickname, name: null, fakten, kontakt: { whatsapp }, sonstiges, eigeneZeilen: entfernt };
+  return { nickname, name: null, fakten, kontakt: { whatsapp }, sonstiges, eigeneZeilen: entfernt + eigeneSaetze + eigeneWerte };
 }
 
 // ---------- Eigene Nachrichten herausfiltern ----------

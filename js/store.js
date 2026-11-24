@@ -24,7 +24,7 @@ const NEU_IN_V2 = ['groesse', 'kinder', 'single', 'single_seit'];
 
 export const STANDARD_PLATTFORMEN = ['Tinder', 'ThaiFriendly'];
 
-export const state = { felder: [], personen: [], plattformen: [], eigeneNamen: [], ignorieren: [], standort: null, geloescht: {}, einstellungenZeit: '' };
+export const state = { felder: [], personen: [], plattformen: [], eigeneNamen: [], ignorieren: [], meineFakten: {}, standort: null, geloescht: {}, einstellungenZeit: '' };
 
 // Meldet jede Änderung (für den automatischen Abgleich mit Google Drive)
 export const aenderung = new EventTarget();
@@ -53,8 +53,15 @@ export async function speichereIgnorieren() {
   await einstellungenGeaendert();
 }
 
+/** Deine eigenen Angaben (Job, Alter …) – werden beim Einfügen nicht der anderen Person zugeordnet. Privat. */
+export async function speichereMeineFakten() {
+  await db.put('meta', state.meineFakten, 'meineFakten');
+  await einstellungenGeaendert();
+}
+
 export async function laden() {
   state.eigeneNamen = (await db.get('meta', 'eigeneNamen')) || [];
+  state.meineFakten = (await db.get('meta', 'meineFakten')) || {};
   state.ignorieren = (await db.get('meta', 'ignorieren')) || [];
   state.geloescht = (await db.get('meta', 'geloescht')) || {};
   state.einstellungenZeit = (await db.get('meta', 'einstellungenZeit')) || '';
