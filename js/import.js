@@ -179,6 +179,16 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '', festeZielId = null) {
       const n = imp.werte[f.key];
       const a = ziel ? wert(ziel, f.key) : null;
       if (!n) {
+        if (a !== null && eigeneAngabeArt(f.key, a) === 'sicher') {
+          // Früher fälschlich übernommen: gespeicherter Wert ist deine eigene Angabe
+          const weg = h('input', { type: 'checkbox', checked: true });
+          inhalt.append(zeile(f.label, h('div', {},
+            h('div', {}, 'bisher gespeichert: ', formatWert(f, a)),
+            h('div', { class: 'warn klein' }, '⚠️ Das ist deine eigene Angabe.'),
+            h('label', { class: 'haken' }, weg, 'Diesen Wert bei der Person entfernen'))));
+          aktionen.push(p => { if (weg.checked) setzeFakt(p, f.key, null); });
+          continue;
+        }
         inhalt.append(zeile(f.label, a === null
           ? h('span', { class: 'fehlt' }, '❌ fehlt noch')
           : h('span', { class: 'leise' }, formatWert(f, a))));
@@ -192,16 +202,24 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '', festeZielId = null) {
         const cb = h('input', { type: 'checkbox', checked: !eigen });
         inhalt.append(zeile(f.label, h('div', {}, h('label', { class: 'haken' }, cb, h('span', { class: eigen ? 'warn' : 'neu' }, eigen ? 'neu? ' : '✅ neu: '), formatWert(f, n.wert)), eigenHinweis, belegEl(n))));
         aktionen.push(p => { if (cb.checked) setzeFakt(p, f.key, n.wert, n.beleg); });
+      } else if (gleich(f.typ, a, n.wert) && eigen) {
+        // Gespeicherter Wert ist in Wahrheit deine eigene Angabe → Entfernen anbieten
+        const weg = h('input', { type: 'checkbox', checked: eigen === 'sicher' });
+        inhalt.append(zeile(f.label, h('div', {},
+          h('div', {}, 'bisher gespeichert: ', formatWert(f, a)), eigenHinweis,
+          h('label', { class: 'haken' }, weg, 'Diesen Wert bei der Person entfernen'))));
+        aktionen.push(p => { if (weg.checked) setzeFakt(p, f.key, null); });
       } else if (gleich(f.typ, a, n.wert)) {
         inhalt.append(zeile(f.label, h('div', {}, h('span', { class: 'neu' }, '✅ schon vorhanden: '), formatWert(f, a))));
         if (n.beleg && !ziel.fakten[f.key]?.beleg) aktionen.push(p => { if (p.fakten[f.key]) p.fakten[f.key].beleg = n.beleg; });
       } else {
         const gruppe = 'w' + Math.random().toString(36).slice(2);
-        const rAlt = h('input', { type: 'radio', name: gruppe, checked: true });
-        const rNeu = h('input', { type: 'radio', name: gruppe });
+        const altIstEigen = eigeneAngabeArt(f.key, a) === 'sicher';   // alter Wert war deine eigene Angabe → neu vorwählen
+        const rAlt = h('input', { type: 'radio', name: gruppe, checked: !altIstEigen });
+        const rNeu = h('input', { type: 'radio', name: gruppe, checked: altIstEigen });
         inhalt.append(zeile(f.label, h('div', {},
           h('div', { class: 'warn' }, '⚠️ Widerspruch – bitte wählen:'),
-          h('label', { class: 'haken' }, rAlt, 'bisher: ', formatWert(f, a)),
+          h('label', { class: 'haken' }, rAlt, 'bisher: ', formatWert(f, a), altIstEigen ? ' (⚠️ deine eigene Angabe)' : ''),
           h('label', { class: 'haken' }, rNeu, 'neu: ', formatWert(f, n.wert)),
           eigenHinweis,
           belegEl(n))));

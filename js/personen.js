@@ -8,6 +8,7 @@ import { ORTE, REGIONEN, ortVon, entfernung, streckeZu, streckeText, km, kmText,
 import { ortEingabe } from './dialoge.js';
 import { syncLeiste } from './syncui.js';
 import { einfuegenBox } from './import.js';
+import { eigeneAngabeArt } from './erkennung.js';
 
 // Such-/Filtereinstellungen bleiben beim Seitenwechsel erhalten.
 let suche = '';
@@ -390,7 +391,14 @@ function faktenBox(p, speichern) {
       h('div', {},
         h('div', { class: v === null ? 'leer-wert' : '' }, v === null ? 'fehlt noch' : anzeige),
         fakt && (fakt.datum || fakt.beleg) && h('div', { class: 'leise klein' }, [datumDE(fakt.datum), fakt.beleg && `„${fakt.beleg}“`].filter(Boolean).join(' · ')),
-        f.key === 'wohnort' && v !== null && ortZeile(p, speichern)),
+        f.key === 'wohnort' && v !== null && ortZeile(p, speichern),
+        v !== null && eigeneAngabeArt(f.key, v) && h('div', { class: 'warn klein' },
+          eigeneAngabeArt(f.key, v) === 'sicher' ? '⚠️ Das ist deine eigene Angabe. ' : '⚠️ Gleich wie deine eigene Angabe – stammt das von dir? ',
+          h('button', { class: 'plattform', onclick: async e => {
+            e.stopPropagation();
+            setzeFakt(p, f.key, null);
+            await speichern();
+          } }, 'Entfernen'))),
       h('span', { class: 'leise' }, '✎'));
   });
   // Werte von gelöschten Feldern
