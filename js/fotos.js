@@ -30,6 +30,36 @@ function verkleinern(bmp, max, qualitaet) {
   return new Promise((res, rej) => c.toBlob(b => (b ? res(b) : rej(new Error('Bild konnte nicht umgewandelt werden'))), 'image/jpeg', qualitaet));
 }
 
+/** Bilder aus einem Einfüge-Ereignis (Strg+V) holen. */
+export function bilderAusEinfuegen(e) {
+  const dateien = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'));
+  if (dateien.length) return dateien;
+  return [...(e.clipboardData?.items || [])]
+    .filter(i => i.kind === 'file' && i.type.startsWith('image/'))
+    .map(i => i.getAsFile()).filter(Boolean);
+}
+
+/** Bilder aus der Zwischenablage holen (Knopf „Bild einfügen“). Der Browser fragt evtl. einmal um Erlaubnis. */
+export async function bilderAusZwischenablage() {
+  if (!navigator.clipboard?.read) throw new Error('Dieser Browser kann Bilder nicht per Knopf einfügen – bitte Strg+V drücken.');
+  let eintraege;
+  try {
+    eintraege = await navigator.clipboard.read();
+  } catch {
+    throw new Error('Kein Zugriff auf die Zwischenablage – bitte erlauben oder Strg+V drücken.');
+  }
+  const bilder = [];
+  for (const it of eintraege) {
+    const typ = it.types.find(t => t.startsWith('image/'));
+    if (typ) {
+      const blob = await it.getType(typ);
+      bilder.push(new File([blob], 'eingefuegt.' + (typ.split('/')[1] || 'png'), { type: typ }));
+    }
+  }
+  if (!bilder.length) throw new Error('In der Zwischenablage ist kein Bild. Erst ein Bild ausschneiden/kopieren (am PC z. B. Windows+Umschalt+S).');
+  return bilder;
+}
+
 /** Foto zu Person hinzufügen (Person danach selbst speichern). */
 export async function fotoHinzufuegen(p, datei) {
   const bmp = await bildLaden(datei);

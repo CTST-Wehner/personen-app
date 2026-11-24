@@ -1,6 +1,6 @@
 // Service Worker: macht die App installierbar und offline nutzbar.
 // Online wird immer die aktuelle Version geladen, offline die zuletzt gespeicherte.
-const CACHE = 'personen-app-v6';
+const CACHE = 'personen-app-v7';
 const DATEIEN = [
   './', './index.html', './manifest.webmanifest', './css/style.css',
   './js/app.js', './js/util.js', './js/db.js', './js/store.js', './js/dialoge.js',

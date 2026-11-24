@@ -1,9 +1,10 @@
 // Seite „Einfügen“: Block aus dem Claude-Projekt einlesen, mit vorhandenen Daten abgleichen, übernehmen.
 import { state, wert, setzeFakt, speicherePerson, neuePerson, feldDef, speichereFelder } from './store.js';
-import { h, toast, normTelefon, telefonGleich, parseWert, gleich, formatWert, heute, geheZu } from './util.js';
+import { h, toast, normTelefon, telefonGleich, parseWert, gleich, formatWert, heute, geheZu, neuZeichnen } from './util.js';
 import { feldBearbeitenDialog } from './felder.js';
 import { erkenne, istBlock } from './erkennung.js';
 import { plattformAuswahl, plattformVorschlag } from './plattform.js';
+import { fotoHinzufuegen, bilderAusEinfuegen, bilderAusZwischenablage } from './fotos.js';
 
 // ---------------- Einlesen ----------------
 
@@ -83,9 +84,9 @@ function finde(imp) {
 
 // ---------------- Abgleich-Karte pro Person ----------------
 
-function importKarte(imp, alleNeuZeichnen, vorschlag = '') {
-  const treffer = finde(imp);
-  let zielId = treffer ? treffer.p.id : 'neu';
+function importKarte(imp, alleNeuZeichnen, vorschlag = '', festeZielId = null) {
+  const treffer = festeZielId ? null : finde(imp);
+  let zielId = festeZielId || (treffer ? treffer.p.id : 'neu');
   let ueberspringen = false;
   let plattform = vorschlag;
   let pfAuswahl = null;
@@ -226,6 +227,11 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '') {
       notizen.push(() => (cb.checked ? s : null));
     }
 
+    if (festeZielId) {
+      // Auswertung direkt in einer Person: keine Zuordnung nötig
+      el.replaceChildren(h('p', { class: 'leise klein' }, 'Gefundene Angaben – abhaken, was übernommen werden soll:'), inhalt);
+      return;
+    }
     el.replaceChildren(
       h('h2', {}, imp.nickname || '(ohne Nickname)'),
       h('p', { class: 'leise klein' }, treffer && zielId === treffer.p.id ? `Erkannt über ${treffer.grund}.` : treffer ? '' : 'Keine passende Person gefunden.'),
@@ -261,14 +267,83 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '') {
   return { el, render, anwenden, pruefen };
 }
 
+// ---------------- Feld „Text einfügen“ direkt in einer Person ----------------
+
+/** Box für die Personenseite: Text hineinkopieren → Angaben werden in diese Person sortiert. */
+export function einfuegenBox(p, { gross = false } = {}) {
+  const ta = h('textarea', { rows: gross ? 10 : 5, placeholder: 'Hier alles hineinkopieren (Strg+V): Profilseite, Chat oder Notizen. Die App sortiert Alter, Größe, Wohnort, Kinder, Single usw. selbst in die Felder. Kopierte Bilder werden zu Fotos.' });
+  const ergebnis = h('div');
+
+  function auswerten() {
+    const text = ta.value;
+    if (!text.trim()) { toast('Bitte zuerst Text einfügen'); return; }
+    let roh;
+    try {
+      roh = istBlock(text) ? parseBlock(text)[0] : erkenne(text);
+    } catch (e) {
+      ergebnis.replaceChildren(h('p', { class: 'fehler' }, 'Konnte den Text nicht lesen: ' + e.message));
+      return;
+    }
+    if (!roh) { ergebnis.replaceChildren(h('p', { class: 'fehler' }, 'Keine Angaben gefunden.')); return; }
+    const imp = normalisiere(roh);
+    const n = Object.keys(imp.werte).length;
+    let karte;
+    karte = importKarte(imp, () => karte.render(), '', p.id);
+    const speichern = h('button', { class: 'primaer', onclick: async () => {
+      speichern.disabled = true;
+      await karte.anwenden();
+      toast('Angaben übernommen');
+      neuZeichnen();
+    } }, 'Ausgewähltes übernehmen');
+    ergebnis.replaceChildren(
+      h('p', { class: 'leise klein' }, (n ? `${n} Angabe(n) gefunden.` : 'Keine bekannten Angaben gefunden.') + (roh.eigeneZeilen ? ` ${roh.eigeneZeilen} Zeile(n) von dir ignoriert.` : '')),
+      karte.el,
+      h('div', { class: 'zeile' }, speichern, h('button', { onclick: () => { ergebnis.replaceChildren(); } }, 'Verwerfen')));
+  }
+
+  const box = h('div', { class: 'box' + (gross ? ' hervor' : '') },
+    h('h2', {}, '📋 Text einfügen und auswerten'),
+    gross && h('p', { class: 'leise klein' }, 'Kopiere jetzt das Profil bzw. den Chat dieser Person hier hinein – du musst nichts von Hand ausfüllen.'),
+    ta,
+    h('div', { class: 'zeile' }, h('button', { class: 'primaer', onclick: auswerten }, 'Auswerten')),
+    ergebnis);
+  // Nach dem Einfügen von Text gleich auswerten
+  ta.addEventListener('paste', () => setTimeout(() => { if (ta.value.trim()) auswerten(); }, 50));
+  return { el: box, fokus: () => ta.focus() };
+}
+
 // ---------------- Seite ----------------
 
 let entwurf = '';   // eingefügter Text bleibt beim Seitenwechsel erhalten
+let entwurfBilder = [];   // eingefügte Bilder (werden der Person als Fotos hinzugefügt)
 
 export function zeigeImport(main) {
   const ta = h('textarea', { rows: 10, placeholder: 'Hier den Block aus Claude einfügen (===PERSONEN-DATEN=== … ===ENDE===). Text davor oder danach stört nicht.', oninput: e => { entwurf = e.target.value; } });
   ta.value = entwurf;
   const ergebnis = h('div');
+
+  // Eingefügte Bilder (Strg+V oder Knopf) sammeln und anzeigen
+  const bilderLeiste = h('div', { class: 'galerie' });
+  const bilderInfo = h('p', { class: 'leise klein' });
+  function bilderZeichnen() {
+    bilderLeiste.replaceChildren(...entwurfBilder.map((f, i) => {
+      const url = URL.createObjectURL(f);
+      return h('button', { type: 'button', class: 'foto', title: 'Entfernen', onclick: () => { entwurfBilder.splice(i, 1); bilderZeichnen(); } },
+        h('img', { src: url, alt: '', onload: () => URL.revokeObjectURL(url) }), h('span', { class: 'badge' }, '✕'));
+    }));
+    bilderInfo.textContent = entwurfBilder.length ? `${entwurfBilder.length} Bild(er) werden beim Übernehmen als Fotos gespeichert (antippen = entfernen).` : '';
+  }
+  const beimEinfuegen = e => {
+    if (!ta.isConnected) { window.removeEventListener('paste', beimEinfuegen); return; }
+    const bilder = bilderAusEinfuegen(e);
+    if (!bilder.length) return;
+    if (!e.clipboardData?.types?.includes('text/plain')) e.preventDefault();   // Text (falls dabei) normal einfügen lassen
+    entwurfBilder.push(...bilder);
+    bilderZeichnen();
+    toast(`${bilder.length} Bild(er) hinzugefügt`);
+  };
+  window.addEventListener('paste', beimEinfuegen);
+  bilderZeichnen();
 
   function auswerten() {
     ergebnis.replaceChildren();
@@ -308,8 +383,17 @@ export function zeigeImport(main) {
         const p = await k.anwenden();
         if (p) gespeichert.push(p);
       }
+      // Eingefügte Bilder als Fotos zur (ersten) Person
+      let fotos = 0;
+      if (entwurfBilder.length && gespeichert[0]) {
+        for (const f of entwurfBilder) {
+          try { await fotoHinzufuegen(gespeichert[0], f); fotos++; } catch (e) { toast(e.message, 5000); }
+        }
+        await speicherePerson(gespeichert[0]);
+      }
       entwurf = '';
-      toast(`${gespeichert.length} Person(en) gespeichert`);
+      entwurfBilder = [];
+      toast(`${gespeichert.length} Person(en) gespeichert` + (fotos ? `, ${fotos} Foto(s)` : ''));
       geheZu(gespeichert.length === 1 ? '#/person/' + encodeURIComponent(gespeichert[0].id) : '#/');
     } }, 'Ausgewähltes übernehmen');
     ergebnis.append(h('p', { class: 'leise' }, art + (liste.length > 1 ? ` ${liste.length} Personen.` : '')), ...karten.map(k => k.el), h('div', { class: 'zeile' }, speichern));
@@ -320,8 +404,13 @@ export function zeigeImport(main) {
     h('h1', {}, 'Einfügen'),
     h('p', { class: 'leise klein' }, 'Pro Einfügen eine Person. Die Erkennung läuft nur auf diesem Gerät.'),
     ta,
+    bilderInfo,
+    bilderLeiste,
     h('div', { class: 'zeile' },
       h('button', { class: 'primaer', onclick: auswerten }, 'Auswerten'),
+      h('button', { onclick: async () => {
+        try { const b = await bilderAusZwischenablage(); entwurfBilder.push(...b); bilderZeichnen(); toast(`${b.length} Bild(er) hinzugefügt`); } catch (e) { toast(e.message, 6000); }
+      } }, '📋 Bild einfügen'),
       h('button', { onclick: async () => {
         try {
           ta.value = await navigator.clipboard.readText();
@@ -331,6 +420,6 @@ export function zeigeImport(main) {
           toast('Zugriff auf die Zwischenablage nicht erlaubt – bitte mit Strg+V einfügen');
         }
       } }, 'Aus Zwischenablage einfügen'),
-      h('button', { onclick: () => { ta.value = ''; entwurf = ''; ergebnis.replaceChildren(); } }, 'Leeren')),
+      h('button', { onclick: () => { ta.value = ''; entwurf = ''; entwurfBilder = []; bilderZeichnen(); ergebnis.replaceChildren(); } }, 'Leeren')),
     ergebnis);
 }

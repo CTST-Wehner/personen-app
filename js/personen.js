@@ -2,11 +2,12 @@
 import { state, wert, setzeFakt, speicherePerson, loeschePerson, neuePerson, fortschritt, feldDef } from './store.js';
 import { h, toast, copyText, digits, neuZeichnen, geheZu, formatWert, heute, datumDE } from './util.js';
 import { dialog, bestaetigen, feldEingabe } from './dialoge.js';
-import { fotoHinzufuegen, vorschauUrl, grossUrl, fotoLoeschen } from './fotos.js';
+import { fotoHinzufuegen, vorschauUrl, grossUrl, fotoLoeschen, bilderAusEinfuegen, bilderAusZwischenablage } from './fotos.js';
 import { plattformAuswahl } from './plattform.js';
 import { ORTE, REGIONEN, ortVon, entfernung, streckeZu, streckeText, km, kmText, ortNachName, standortSetzen, gpsAbfragen } from './orte.js';
 import { ortEingabe } from './dialoge.js';
 import { syncLeiste } from './syncui.js';
+import { einfuegenBox } from './import.js';
 
 // Such-/Filtereinstellungen bleiben beim Seitenwechsel erhalten.
 let suche = '';
@@ -265,13 +266,19 @@ export async function zeigePerson(main, id) {
         h('button', { onclick: () => namenBearbeiten(p, speichern) }, 'Nickname/Name ändern')),
       (() => { const f = fortschritt(p); return h('div', { class: 'leise klein' }, `${f.k} von ${f.n} Fakten`); })()));
 
-  main.append(...[h('p', {}, h('a', { href: '#/' }, '← Übersicht')), kopf, kontaktBox(p), faktenBox(p, speichern), erfragenBox(p), fotoBox(p, speichern), notizBox(p), verlaufBox(p)].filter(Boolean),
+  // Noch keine Angaben (z. B. gerade angelegt) → Einfügefeld groß und ganz oben
+  const leer = fortschritt(p).k === 0;
+  const einfuegen = einfuegenBox(p, { gross: leer });
+  main.append(...[h('p', {}, h('a', { href: '#/' }, '← Übersicht')), kopf, leer && einfuegen.el, kontaktBox(p), faktenBox(p, speichern),
+    !leer && einfuegen.el, erfragenBox(p), fotoBox(p, speichern), notizBox(p), verlaufBox(p)].filter(Boolean),
     h('div', { class: 'zeile' }, h('button', { class: 'gefahr', onclick: async () => {
       if (!(await bestaetigen(`„${p.nickname}“ mit allen Fakten und Fotos endgültig löschen? Das lässt sich nicht rückgängig machen.`, 'Endgültig löschen'))) return;
       await loeschePerson(p);
       toast('Person gelöscht');
       geheZu('#/');
     } }, 'Person löschen')));
+  // Am PC gleich ins Einfügefeld springen (am Handy nicht – sonst springt die Tastatur auf)
+  if (leer && !window.matchMedia('(pointer: coarse)').matches) setTimeout(() => einfuegen.fokus(), 50);
 }
 
 async function plattformAendern(p, speichern) {
@@ -412,8 +419,20 @@ function fotoBox(p, speichern) {
     h('div', { class: 'zeile' },
       h('button', { onclick: () => datei.click() }, '🖼 Fotos wählen'),
       h('button', { onclick: () => kamera.click() }, '📷 Kamera'),
-      h('span', { class: 'leise klein' }, 'oder Bilder hierher ziehen')),
+      h('button', { onclick: async () => {
+        try { await hochladen(await bilderAusZwischenablage()); } catch (e) { toast(e.message, 6000); }
+      } }, '📋 Bild einfügen')),
+    h('p', { class: 'leise klein' }, 'Am PC: Bildausschnitt mit Windows+Umschalt+S ausschneiden, dann hier Strg+V drücken (oder „Bild einfügen“). Bilder können auch hierher gezogen werden.'),
     datei, kamera);
+  // Strg+V irgendwo auf der Personenseite: eingefügte Bilder werden zu Fotos (Text bleibt, wo er ist)
+  const beimEinfuegen = e => {
+    if (!box.isConnected) { window.removeEventListener('paste', beimEinfuegen); return; }
+    const bilder = bilderAusEinfuegen(e);
+    if (!bilder.length) return;
+    if (!e.clipboardData?.types?.includes('text/plain')) e.preventDefault();   // Text (falls dabei) normal einfügen lassen
+    hochladen(bilder);
+  };
+  window.addEventListener('paste', beimEinfuegen);
   box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('drop'); });
   box.addEventListener('dragleave', () => box.classList.remove('drop'));
   box.addEventListener('drop', e => { e.preventDefault(); box.classList.remove('drop'); hochladen([...e.dataTransfer.files]); });
