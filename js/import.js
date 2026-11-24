@@ -292,6 +292,8 @@ export function zeigeImport(main) {
       const p = erkenne(ta.value);
       const n = Object.keys(p.fakten).length;
       art = n ? `Automatisch erkannt: ${n} Angabe(n). Bitte prüfen – was fehlt, kannst du später in der Person ergänzen.` : 'Im Text wurden keine bekannten Angaben gefunden.';
+      if (p.eigeneZeilen) art += ` ${p.eigeneZeilen} Zeile(n) von dir wurden ignoriert.`;
+      else if (!state.eigeneNamen.length) art += ' Tipp: Unter „Felder → Meine Namen“ deinen Benutzernamen eintragen, damit deine eigenen Nachrichten nicht mit ausgewertet werden.';
       liste = [p];
     }
     const karten = [];

@@ -149,7 +149,10 @@ export function erkenne(text) {
     return true;
   };
 
-  const zeilen = String(text).split(/\r?\n|\s[|•·]\s/).map(z => z.trim()).filter(Boolean);
+  const alleZeilen = String(text).split(/\r?\n|\s[|•·]\s/).map(z => z.trim()).filter(Boolean);
+  // Deine eigenen Nachrichten (unter „Meine Namen“ eingetragen) nicht auswerten
+  const { zeilen, entfernt } = eigeneZeilenEntfernen(alleZeilen);
+  text = zeilen.join('\n');
 
   // 1) „Beschriftung: Wert“ (oder Beschriftung in einer Zeile, Wert in der nächsten)
   const paare = [];
@@ -260,6 +263,16 @@ export function erkenne(text) {
     const z = zeilen.slice(0, 3).find(z => !istKopfzeile(z));
     if (z && z.length <= 25 && !/[:：=]/.test(z) && /\p{L}/u.test(z) && z.split(/\s+/).length <= 3 && !labelZuKey(z)) nickname = z;
   }
+  // Chat „Noi: …“: der häufigste Sprecher (deine Zeilen sind schon entfernt) ist die Person
+  if (!nickname) {
+    const zaehler = {};
+    for (const z of zeilen) {
+      const sp = sprecherVon(z);
+      if (sp && !labelZuKey(sp.name) && /\p{L}/u.test(sp.name) && sp.name.length <= 25) zaehler[sp.name] = (zaehler[sp.name] || 0) + 1;
+    }
+    const best = Object.entries(zaehler).filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1])[0];
+    if (best) nickname = best[0];
+  }
   // „Mai, 27“ (so zeigt z. B. Tinder Name und Alter) → Nickname „Mai“, Alter 27
   const nameAlter = nickname.match(/^(.+?),\s*(\d{2})$/);
   if (nameAlter) {
@@ -268,7 +281,74 @@ export function erkenne(text) {
     if (n >= 18 && n <= 99) setze('alter', n, nameAlter[0]);
   }
 
-  return { nickname, name: null, fakten, kontakt: { whatsapp }, sonstiges };
+  return { nickname, name: null, fakten, kontakt: { whatsapp }, sonstiges, eigeneZeilen: entfernt };
+}
+
+// ---------- Eigene Nachrichten herausfiltern ----------
+
+const kompakt = s => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+// Zeit/Datum/Zusätze aus einer Kopfzeile entfernen („MeinName · 10:32“, „… (you)“, „[23.11.26, 14:02]“)
+const kopfBereinigen = z => z
+  .replace(/\[[^\]]*\]/g, ' ')
+  .replace(/\((?:you|du|ich|me|online|offline)\)/gi, ' ')
+  .replace(/\b\d{1,2}[.\/]\d{1,2}(?:[.\/]\d{2,4})?,?/g, ' ')
+  .replace(/\b\d{1,2}:\d{2}(?:\s*(?:am|pm|uhr))?\b/gi, ' ')
+  .replace(/\b(?:today|yesterday|heute|gestern|online|offline|sent|gesendet|seen|gelesen)\b/gi, ' ')
+  .replace(/[-–·•:]+\s*$/, '');
+
+/** „Name: Text“ am Zeilenanfang (Chat-Export, auch mit „[Datum, Uhrzeit]“ davor). */
+function sprecherVon(z) {
+  const ohneZeit = z.replace(/^\s*\[[^\]]*\]\s*/, '').replace(/^\s*\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4},?\s*\d{1,2}:\d{2}\s*-\s*/, '');
+  const m = ohneZeit.match(/^\s*([^:：\d][^:：]{1,39}?)\s*[:：]\s*(.*)$/);
+  return m ? { name: m[1].trim(), rest: m[2] } : null;
+}
+
+/**
+ * Entfernt Zeilen, die von dir stammen:
+ *  - „MeinName: text“ oder „[Datum] MeinName: text“ (eine Zeile)
+ *  - Kopfzeile „MeinName“ (evtl. mit Uhrzeit) → die folgenden Zeilen bis zur nächsten fremden Kopfzeile
+ *  - jede andere Zeile, in der dein Name vorkommt
+ */
+function eigeneZeilenEntfernen(zeilen) {
+  // „Name (Tinder)“ → nur „Name“ vergleichen
+  const eigene = (state.eigeneNamen || []).map(n => kompakt(String(n).replace(/\s*\([^)]*\)\s*$/, ''))).filter(n => n.length >= 3);
+  if (!eigene.length) return { zeilen, entfernt: 0 };
+  const istEigen = s => eigene.includes(kompakt(s));
+  const enthaeltEigen = s => { const k = kompakt(s); return eigene.some(n => k.includes(n)); };
+
+  const sprecher = sprecherVon;
+  // Kopfzeile eines anderen Absenders: kurz, sieht aus wie ein Benutzername/Name, kein Satz
+  const KURZANTWORT = /^(ok|okay|okey|yes|yeah|yep|no|nope|haha+|hehe+|lol|hi|hello|hey|thanks|thank you|thx|good|sure|ja|nein|danke|gut|hallo|na|ka|kha|krub|555+)$/i;
+  const fremderKopf = z => {
+    const b = kopfBereinigen(z).trim();
+    return b.length >= 3 && b.length <= 30 && !istEigen(b) && /^[\p{L}\d_.\- ]+$/u.test(b) && b.split(/\s+/).length <= 3
+      && /\p{L}/u.test(b) && !/[.!?,]$/.test(z.trim()) && !KURZANTWORT.test(b);
+  };
+
+  const behalten = [];
+  let imEigenenBlock = false;
+  let entfernt = 0;
+  for (const z of zeilen) {
+    const sp = sprecher(z);
+    if (sp && kompakt(sp.name).length >= 2) {
+      // Zeile mit Sprecher vorneweg
+      imEigenenBlock = false;
+      if (istEigen(sp.name) || /^(you|du|me|ich)$/i.test(sp.name.trim())) { entfernt++; continue; }
+      if (enthaeltEigen(z)) { entfernt++; continue; }
+      behalten.push(z);
+      continue;
+    }
+    const kopf = kopfBereinigen(z).trim();
+    if (istEigen(kopf)) { imEigenenBlock = true; entfernt++; continue; }
+    if (imEigenenBlock) {
+      if (fremderKopf(z)) { imEigenenBlock = false; behalten.push(z); continue; }
+      entfernt++;
+      continue;
+    }
+    if (enthaeltEigen(z)) { entfernt++; continue; }
+    behalten.push(z);
+  }
+  return { zeilen: behalten, entfernt };
 }
 
 /** Sieht der Text wie ein Claude-Block / JSON aus? */

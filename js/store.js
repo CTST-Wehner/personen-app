@@ -24,7 +24,7 @@ const NEU_IN_V2 = ['groesse', 'kinder', 'single', 'single_seit'];
 
 export const STANDARD_PLATTFORMEN = ['Tinder', 'ThaiFriendly'];
 
-export const state = { felder: [], personen: [], plattformen: [], standort: null, geloescht: {}, einstellungenZeit: '' };
+export const state = { felder: [], personen: [], plattformen: [], eigeneNamen: [], standort: null, geloescht: {}, einstellungenZeit: '' };
 
 // Meldet jede Änderung (für den automatischen Abgleich mit Google Drive)
 export const aenderung = new EventTarget();
@@ -41,7 +41,14 @@ export async function speicherePlattformen() {
   await einstellungenGeaendert();
 }
 
+/** Deine eigenen Namen/Benutzernamen (z. B. bei ThaiFriendly) – Zeilen von dir werden beim Einfügen ignoriert. */
+export async function speichereEigeneNamen() {
+  await db.put('meta', state.eigeneNamen, 'eigeneNamen');
+  await einstellungenGeaendert();
+}
+
 export async function laden() {
+  state.eigeneNamen = (await db.get('meta', 'eigeneNamen')) || [];
   state.geloescht = (await db.get('meta', 'geloescht')) || {};
   state.einstellungenZeit = (await db.get('meta', 'einstellungenZeit')) || '';
   const pl = await db.get('meta', 'plattformen');

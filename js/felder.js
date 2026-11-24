@@ -1,7 +1,46 @@
 // Seite „Felder“: Felder anlegen/ändern/sortieren und Projekt-Anweisung für Claude erzeugen.
-import { state, speichereFelder, speicherePerson, speicherePlattformen, TYPEN, FEST, STANDARD_FELDER } from './store.js';
+import { state, speichereFelder, speicherePerson, speicherePlattformen, speichereEigeneNamen, TYPEN, FEST, STANDARD_FELDER } from './store.js';
 import { h, toast, copyText, slug } from './util.js';
 import { dialog, bestaetigen, eingabe } from './dialoge.js';
+
+/** Box „Meine Namen“: deine eigenen Benutzernamen – deine Zeilen werden beim Einfügen ignoriert. */
+function eigeneNamenBox() {
+  const liste = h('div');
+  function zeichne() {
+    liste.replaceChildren(...state.eigeneNamen.map((n, i) => h('div', { class: 'feld-zeile' },
+      h('strong', {}, n),
+      h('div', { class: 'feld-knoepfe' }, h('button', { class: 'gefahr', onclick: async () => {
+        state.eigeneNamen.splice(i, 1);
+        await speichereEigeneNamen();
+        zeichne();
+      } }, 'Entfernen')))));
+    if (!state.eigeneNamen.length) liste.append(h('p', { class: 'warn klein' }, 'Noch kein Name eingetragen – deine eigenen Nachrichten könnten sonst der anderen Person zugeordnet werden.'));
+  }
+  async function neu() {
+    const name = h('input', { type: 'text', placeholder: 'z. B. dein Benutzername' });
+    const plattform = h('select', {}, h('option', { value: '' }, '– egal / alle –'), state.plattformen.map(p => h('option', { value: p }, p)));
+    const r = await dialog('Mein Name / Benutzername', [
+      h('p', { class: 'leise klein' }, 'So, wie er über deinen Nachrichten steht. Für jede Plattform (ThaiFriendly, Tinder …) einen eigenen Eintrag anlegen.'),
+      h('label', {}, 'Name', name),
+      h('label', {}, 'Plattform', plattform),
+    ], [
+      { text: 'Abbrechen', wert: null },
+      { text: 'Hinzufügen', klasse: 'primaer', wert: () => (name.value.trim() ? { n: name.value.trim(), p: plattform.value } : null) },
+    ]);
+    if (!r) return;
+    const n = r.p ? `${r.n} (${r.p})` : r.n;
+    if (state.eigeneNamen.some(x => x.toLowerCase() === n.toLowerCase())) { toast('Ist schon eingetragen'); return; }
+    state.eigeneNamen.push(n);
+    await speichereEigeneNamen();
+    zeichne();
+  }
+  zeichne();
+  return h('div', { class: 'box' },
+    h('h2', {}, 'Meine Namen'),
+    h('p', { class: 'leise klein' }, 'Zeilen und Nachrichten, über denen einer dieser Namen steht, stammen von dir und werden beim Einfügen nicht ausgewertet. Die Namen bleiben privat (nur auf deinen Geräten und verschlüsselt in Drive).'),
+    liste,
+    h('div', { class: 'zeile' }, h('button', { class: 'primaer', onclick: neu }, '+ Namen hinzufügen')));
+}
 
 /** Box zum Verwalten der Plattformen (Tinder, ThaiFriendly, …). */
 function plattformBox() {
@@ -205,6 +244,7 @@ export function zeigeFelder(main) {
       h('div', { class: 'zeile' },
         h('button', { class: 'primaer', onclick: neu }, '+ Feld hinzufügen'),
         h('button', { onclick: standardHolen }, 'Fehlende Standardfelder zurückholen'))),
+    eigeneNamenBox(),
     plattformBox(),
     h('div', { class: 'box' },
       h('h2', {}, 'Projekt-Anweisung für Claude'),

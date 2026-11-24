@@ -65,7 +65,7 @@ export function zusammenfuehren(lokal, remote) {
   }
   let einstellungen = null;
   if ((remote.einstellungenZeit || '') > (lokal.einstellungenZeit || '') && Array.isArray(remote.felder)) {
-    einstellungen = { felder: remote.felder, plattformen: remote.plattformen || [], zeit: remote.einstellungenZeit };
+    einstellungen = { felder: remote.felder, plattformen: remote.plattformen || [], eigeneNamen: remote.eigeneNamen || [], zeit: remote.einstellungenZeit };
     lokalGeaendert = true;
   }
   return { personen: [...personen.values()], geloescht, entfernt, einstellungen, lokalGeaendert };
@@ -84,9 +84,11 @@ async function anwenden(erg) {
   if (erg.einstellungen) {
     state.felder = erg.einstellungen.felder;
     state.plattformen = erg.einstellungen.plattformen;
+    state.eigeneNamen = erg.einstellungen.eigeneNamen;
     state.einstellungenZeit = erg.einstellungen.zeit;
     await db.put('meta', state.felder, 'felder');
     await db.put('meta', state.plattformen, 'plattformen');
+    await db.put('meta', state.eigeneNamen, 'eigeneNamen');
     await db.put('meta', state.einstellungenZeit, 'einstellungenZeit');
   }
 }
@@ -96,6 +98,7 @@ const dokument = () => ({
   gespeichert: new Date().toISOString(),
   felder: state.felder,
   plattformen: state.plattformen,
+  eigeneNamen: state.eigeneNamen,
   einstellungenZeit: state.einstellungenZeit,
   geloescht: state.geloescht,
   personen: state.personen,
