@@ -1,0 +1,7 @@
+# Schutz: Personendaten dürfen nie ins (öffentliche) Repository
+personen-backup-*.json
+*.backup.json
+*.enc
+*.csv
+*.xlsx
+fotos/

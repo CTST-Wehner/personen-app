@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Sperre: Der Browser darf nur Dateien dieser App laden. Einzige Ausnahme: Google-Anmeldung und Google Drive
+     (dorthin gehen nur verschlüsselte Daten). Alles andere ist blockiert. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/; style-src 'self' https://accounts.google.com/gsi/; frame-src https://accounts.google.com/gsi/; img-src 'self' blob: data:; connect-src 'self' https://www.googleapis.com https://accounts.google.com/gsi/; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#2563eb">
+<title>Personen</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/style.css">
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<header class="kopf">
+  <span class="titel">Personen</span>
+  <nav id="nav">
+    <a href="#/" data-r="">Übersicht</a>
+    <a href="#/import" data-r="import">Einfügen</a>
+    <a href="#/karte" data-r="karte">Karte</a>
+    <a href="#/felder" data-r="felder">Felder</a>
+    <a href="#/daten" data-r="daten">Daten</a>
+  </nav>
+</header>
+<main id="main"><p class="leer">Lädt …</p></main>
+<div id="toast" hidden></div>
+</body>
+</html>
