@@ -8,7 +8,7 @@ import { ORTE, REGIONEN, ortVon, entfernung, streckeZu, streckeText, km, kmText,
 import { ortEingabe } from './dialoge.js';
 import { syncLeiste } from './syncui.js';
 import { einfuegenBox } from './import.js';
-import { eigeneAngabeArt } from './erkennung.js';
+import { eigeneAngabeArt, profilFeld } from './erkennung.js';
 
 // Such-/Filtereinstellungen bleiben beim Seitenwechsel erhalten.
 let suche = '';
@@ -192,6 +192,7 @@ export function zeigeUebersicht(main) {
       if (plattformFilter === '-' && p.plattform) return false;
       if (plattformFilter && plattformFilter !== '-' && p.plattform !== plattformFilter) return false;
       const f = fortschritt(p);
+      if (filter === 'profil') { const pf = profilFeld(); if (!pf || wert(p, pf.key) === true) return false; }
       if (filter === 'stern' && !p.interessant) return false;
       if (filter === 'voll' && f.k < f.n) return false;
       if (filter === 'fehlt' && f.k >= f.n) return false;
@@ -214,7 +215,9 @@ export function zeigeUebersicht(main) {
     h('option', { value: 'alle' }, 'Alle'),
     h('option', { value: 'stern' }, 'Nur ★'),
     h('option', { value: 'voll' }, 'Vollständig'),
-    h('option', { value: 'fehlt' }, 'Fehlt noch etwas'));
+    h('option', { value: 'fehlt' }, 'Fehlt noch etwas'),
+    profilFeld() && h('option', { value: 'profil' }, `${profilFeld().label}: noch nicht Ja`));
+  if (filter === 'profil' && !profilFeld()) filter = 'alle';
   filterFeld.value = filter;
   const genutzt = [...new Set([...state.plattformen, ...state.personen.map(p => p.plattform).filter(Boolean)])];
   const plattformFeld = h('select', { onchange: e => { plattformFilter = e.target.value; zeichne(); } },

@@ -42,6 +42,11 @@ export function eigeneAngabeArt(key, wert) {
   return null;
 }
 
+/** Dein Feld „Profil gelesen & verstanden“: das erste Ja/Nein-Feld mit „Profil“ im Namen. */
+export function profilFeld() {
+  return state.felder.find(f => f.typ === 'janein' && /profil|profile/i.test(`${f.key} ${f.label}`)) || null;
+}
+
 /** Wo steht bei dieser Plattform die Antwort? ThaiFriendly: über der Frage, Tinder: darunter. */
 export function richtungFuer(plattform) {
   const p = String(plattform || '').toLowerCase().replace(/[\s\-_.]+/g, '');
@@ -339,6 +344,16 @@ export function erkenne(text, optionen = {}) {
     r = suche(/\b(?:i live in|lives in|i'?m living in|i am living in|living in|i stay in|i'?m staying in|i am staying in|ich wohne in|wohne in|ich lebe in|lebe in)\s+([^.!?\n]{2,40})/i)
       || suche(/\b(?:i'?m from|i am from|ich komme aus|komme aus)\s+([^.!?\n]{2,40})/i);
     if (r) setze('wohnort', textKuerzen(r.m[1]), r.s);
+  }
+  // Dein Ja/Nein-Feld „Profil gelesen & verstanden“ (jedes Ja/Nein-Feld mit „Profil“ im Namen)
+  const pf = profilFeld();
+  if (pf && fakten[pf.key] === undefined) {
+    r = suche(/\b(?:didn'?t read|did not read|haven'?t read|have not read|never read|don'?t understand (?:your|ur) profile|didn'?t understand (?:your|ur) profile|what(?:'s| is) (?:in|on) your profile|where is your profile|noch nicht gelesen|nicht gelesen|nicht verstanden)\b|\bnot yet\b.*\b(?:read|profile)\b|\b(?:read|profile)\b.*\bnot yet\b/i);
+    if (r) setze(pf.key, false, r.s);
+    else {
+      r = suche(/\b(?:i\s+(?:already\s+|have\s+|did\s+)?read\s+(?:your|ur)\s+profile|read\s+(?:your|ur)\s+profile\s+(?:already|before|ka|kha|na)|i\s+read\s+(?:it\s+)?already|i\s+(?:already\s+)?understand\s+(?:your|ur)\s+profile|yes,?\s+i\s+(?:read|understand)|i\s+know\s+what\s+you\s+(?:are\s+)?look(?:ing)?\s+for|understand\s+what\s+you\s+(?:are\s+)?look(?:ing)?\s+for|ich\s+habe\s+dein\s+profil\s+gelesen|profil\s+gelesen|profil\s+verstanden)\b/i);
+      if (r) setze(pf.key, true, r.s);
+    }
   }
   if (!fakten.handy) {
     for (const z of zeilen) {
