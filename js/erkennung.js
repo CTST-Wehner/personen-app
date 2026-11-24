@@ -22,6 +22,16 @@ const ZAHLWOERTER = { no: 0, none: 0, keine: 0, kein: 0, one: 1, a: 1, an: 1, ei
 
 const norm = s => String(s).toLowerCase().replace(/[*_#•·]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/[:：=]$/, '').trim();
 
+/** Soll diese Angabe/Beschriftung laut „Immer ignorieren“-Liste übersprungen werden? */
+export function istIgnoriert(text) {
+  const liste = (state.ignorieren || []).map(norm);
+  if (!liste.length) return false;
+  const t = norm(text);
+  if (liste.includes(t)) return true;
+  const m = String(text).match(/^([^:：]{1,40}?)\s*[:：]/);   // „Beschriftung: Wert“ → Beschriftung prüfen
+  return !!m && liste.includes(norm(m[1]));
+}
+
 function labelZuKey(label) {
   const l = norm(label);
   if (!l || !/\p{L}/u.test(l)) return null;
@@ -43,7 +53,7 @@ function groesse(v, nurMitEinheit) {
   if (m) return +m[1];
   m = v.match(/\b([12])[.,](\d{1,2})\s*(?:m|meter|metre)\b/i);
   if (m) return Math.round(+`${m[1]}.${m[2].padEnd(2, '0')}` * 100);
-  m = v.match(/\b([4-7])\s*(?:'|’|ft|feet|foot)\s*(\d{1,2})?\s*(?:"|”|''|in|inch|inches)?/i);
+  m = v.match(/\b([4-7])\s*(?:'|’|′|´|`|ft\.?|feet|foot)\s*(\d{1,2})?\s*(?:"|”|″|''|’’|′′|in\.?|inch|inches)?/i);
   if (m) return Math.round(+m[1] * 30.48 + (+m[2] || 0) * 2.54);
   if (!nurMitEinheit) {
     m = v.match(/\b(1\d{2}|2[01]\d)\b/);
@@ -170,6 +180,7 @@ export function erkenne(text) {
   const anzahl = {};
   for (const p of paare) anzahl[norm(p.label)] = (anzahl[norm(p.label)] || 0) + 1;
   for (const p of paare) {
+    if (istIgnoriert(p.label)) continue;
     const key = labelZuKey(p.label);
     if (/whats\s?app/i.test(p.label)) whatsapp = true;
     if (key) {
@@ -191,7 +202,7 @@ export function erkenne(text) {
   }
   if (!fakten.groesse) {
     for (const s of saetze) {
-      if (!/(\d\s*cm\b|\d\s*m\b|tall|height|groß|gross|\d\s*(?:ft|feet|'|’))/i.test(s)) continue;
+      if (!/(\d\s*cm\b|\d\s*m\b|tall|height|groß|gross|\d\s*(?:ft|feet|'|’|′))/i.test(s)) continue;
       const g = groesse(s, true);
       if (g && g >= 120 && g <= 220) { setze('groesse', g, s); break; }
     }
@@ -320,6 +331,7 @@ function eigeneZeilenEntfernen(zeilen) {
   // Kopfzeile eines anderen Absenders: kurz, sieht aus wie ein Benutzername/Name, kein Satz
   const KURZANTWORT = /^(ok|okay|okey|yes|yeah|yep|no|nope|haha+|hehe+|lol|hi|hello|hey|thanks|thank you|thx|good|sure|ja|nein|danke|gut|hallo|na|ka|kha|krub|555+)$/i;
   const fremderKopf = z => {
+    if (/^[\p{L}\d_.\- ]{2,25},\s*\d{2}$/u.test(z.trim()) && !istEigen(z.split(',')[0])) return true;   // „Noi, 29“
     const b = kopfBereinigen(z).trim();
     return b.length >= 3 && b.length <= 30 && !istEigen(b) && /^[\p{L}\d_.\- ]+$/u.test(b) && b.split(/\s+/).length <= 3
       && /\p{L}/u.test(b) && !/[.!?,]$/.test(z.trim()) && !KURZANTWORT.test(b);
@@ -327,6 +339,7 @@ function eigeneZeilenEntfernen(zeilen) {
 
   const behalten = [];
   let imEigenenBlock = false;
+  let blockZeilen = 0;
   let entfernt = 0;
   for (const z of zeilen) {
     const sp = sprecher(z);
@@ -339,9 +352,11 @@ function eigeneZeilenEntfernen(zeilen) {
       continue;
     }
     const kopf = kopfBereinigen(z).trim();
-    if (istEigen(kopf)) { imEigenenBlock = true; entfernt++; continue; }
+    if (istEigen(kopf)) { imEigenenBlock = true; blockZeilen = 0; entfernt++; continue; }
     if (imEigenenBlock) {
-      if (fremderKopf(z)) { imEigenenBlock = false; behalten.push(z); continue; }
+      // Block endet bei fremder Kopfzeile, bei einer Profil-Beschriftung (z. B. „Height“) oder nach vielen Zeilen
+      // (z. B. wenn dein Name nur oben in der Menüleiste der kopierten Seite stand)
+      if (fremderKopf(z) || labelZuKey(kopf) || ++blockZeilen > 15) { imEigenenBlock = false; behalten.push(z); continue; }
       entfernt++;
       continue;
     }

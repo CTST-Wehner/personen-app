@@ -1,7 +1,28 @@
 // Seite „Felder“: Felder anlegen/ändern/sortieren und Projekt-Anweisung für Claude erzeugen.
-import { state, speichereFelder, speicherePerson, speicherePlattformen, speichereEigeneNamen, TYPEN, FEST, STANDARD_FELDER } from './store.js';
+import { state, speichereFelder, speicherePerson, speicherePlattformen, speichereEigeneNamen, speichereIgnorieren, TYPEN, FEST, STANDARD_FELDER } from './store.js';
 import { h, toast, copyText, slug } from './util.js';
 import { dialog, bestaetigen, eingabe } from './dialoge.js';
+
+/** Box „Immer ignoriert“: Angaben, die beim Einfügen nicht mehr angezeigt werden. */
+function ignoriertBox() {
+  const liste = h('div');
+  function zeichne() {
+    liste.replaceChildren(...state.ignorieren.map((n, i) => h('div', { class: 'feld-zeile' },
+      h('span', {}, n),
+      h('div', { class: 'feld-knoepfe' }, h('button', { onclick: async () => {
+        state.ignorieren.splice(i, 1);
+        await speichereIgnorieren();
+        zeichne();
+        toast(`„${n}“ wird wieder angezeigt`);
+      } }, 'Wieder anzeigen')))));
+    if (!state.ignorieren.length) liste.append(h('p', { class: 'leise klein' }, 'Noch nichts. Beim Einfügen kannst du bei unbekannten Angaben „Immer ignorieren“ wählen – sie erscheinen dann hier.'));
+  }
+  zeichne();
+  return h('div', { class: 'box' },
+    h('h2', {}, 'Immer ignoriert'),
+    h('p', { class: 'leise klein' }, 'Diese Beschriftungen bzw. Angaben werden beim Einfügen übersprungen.'),
+    liste);
+}
 
 /** Box „Meine Namen“: deine eigenen Benutzernamen – deine Zeilen werden beim Einfügen ignoriert. */
 function eigeneNamenBox() {
@@ -245,6 +266,7 @@ export function zeigeFelder(main) {
         h('button', { class: 'primaer', onclick: neu }, '+ Feld hinzufügen'),
         h('button', { onclick: standardHolen }, 'Fehlende Standardfelder zurückholen'))),
     eigeneNamenBox(),
+    ignoriertBox(),
     plattformBox(),
     h('div', { class: 'box' },
       h('h2', {}, 'Projekt-Anweisung für Claude'),

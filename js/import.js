@@ -1,8 +1,8 @@
 // Seite „Einfügen“: Block aus dem Claude-Projekt einlesen, mit vorhandenen Daten abgleichen, übernehmen.
-import { state, wert, setzeFakt, speicherePerson, neuePerson, feldDef, speichereFelder } from './store.js';
+import { state, wert, setzeFakt, speicherePerson, neuePerson, feldDef, speichereFelder, speichereIgnorieren } from './store.js';
 import { h, toast, normTelefon, telefonGleich, parseWert, gleich, formatWert, heute, geheZu, neuZeichnen } from './util.js';
 import { feldBearbeitenDialog } from './felder.js';
-import { erkenne, istBlock } from './erkennung.js';
+import { erkenne, istBlock, istIgnoriert } from './erkennung.js';
 import { plattformAuswahl, plattformVorschlag } from './plattform.js';
 import { fotoHinzufuegen, bilderAusEinfuegen, bilderAusZwischenablage } from './fotos.js';
 
@@ -44,6 +44,7 @@ function normalisiere(roh) {
   const werte = {};
   for (const [k0, v] of Object.entries(roh.fakten || {})) {
     const key = String(k0).trim().toLowerCase();
+    if (!feldDef(key) && istIgnoriert(key)) continue;
     const o = v && typeof v === 'object' && !Array.isArray(v) ? v : { wert: v };
     if (o.wert === null || o.wert === undefined || o.wert === '') continue;
     const f = feldDef(key);
@@ -58,7 +59,7 @@ function normalisiere(roh) {
     name: roh.name ? String(roh.name).trim() : null,
     werte,
     whatsapp: !!(k.whatsapp || k.handy_ist_whatsapp),
-    sonstiges: sonst.map(String).filter(s => s.trim()),
+    sonstiges: sonst.map(String).filter(s => s.trim() && !istIgnoriert(s)),
   };
 }
 
@@ -115,6 +116,16 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '', festeZielId = null) {
       imp.sonstiges = imp.sonstiges.filter(s => s !== wertText);
     }
     toast(`Feld „${f.label}“ angelegt – Projekt-Anweisung in Claude später aktualisieren`);
+    alleNeuZeichnen();
+  }
+
+  async function immerIgnorieren(eintrag, entfernen) {
+    if (!state.ignorieren.some(x => x.toLowerCase() === eintrag.toLowerCase())) {
+      state.ignorieren.push(eintrag);
+      await speichereIgnorieren();
+    }
+    entfernen();
+    toast(`„${eintrag}“ wird künftig ignoriert (rückgängig: Felder → Immer ignoriert)`, 4000);
     alleNeuZeichnen();
   }
 
@@ -208,7 +219,8 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '', festeZielId = null) {
         h('div', { class: 'warn' }, `Unbekanntes Feld: ${n.wert}`), belegEl(n),
         h('div', { class: 'zeile' },
           h('label', { class: 'haken' }, cb, 'in Notizen'),
-          h('button', { type: 'button', onclick: () => alsFeldAnlegen({ key: k, label: k.charAt(0).toUpperCase() + k.slice(1), typ: typeof n.wert === 'number' ? 'zahl' : 'text', frage: '' }, null, k) }, 'Als neues Feld anlegen')))));
+          h('button', { type: 'button', onclick: () => alsFeldAnlegen({ key: k, label: k.charAt(0).toUpperCase() + k.slice(1), typ: typeof n.wert === 'number' ? 'zahl' : 'text', frage: '' }, null, k) }, 'Als Feld aufnehmen'),
+          h('button', { type: 'button', onclick: () => immerIgnorieren(k, () => { delete imp.werte[k]; }) }, 'Immer ignorieren')))));
       notizen.push(() => (cb.checked ? `${k}: ${n.wert}` : null));
     }
 
@@ -223,7 +235,12 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '', festeZielId = null) {
             const m = s.match(/^([^:]{1,30}):\s*(.+)$/);
             const label = m ? m[1].trim() : '';
             alsFeldAnlegen({ key: '', label, typ: m && /^\s*-?\d+([.,]\d+)?\s*$/.test(m[2]) ? 'zahl' : 'text', frage: '', woerter: label }, s);
-          } }, 'Als neues Feld anlegen')))));
+          } }, 'Als Feld aufnehmen'),
+          h('button', { type: 'button', onclick: () => {
+            // Bei „Beschriftung: Wert“ die Beschriftung merken (gilt dann für jeden Wert), sonst den ganzen Text
+            const m = s.match(/^([^:]{1,30}):\s*(.+)$/);
+            immerIgnorieren(m ? m[1].trim() : s, () => { imp.sonstiges = imp.sonstiges.filter(x => x !== s); });
+          } }, 'Immer ignorieren')))));
       notizen.push(() => (cb.checked ? s : null));
     }
 
