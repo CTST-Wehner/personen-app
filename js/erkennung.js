@@ -196,8 +196,18 @@ export function erkenne(text, optionen = {}) {
   };
 
   const alleZeilen = String(text).split(/\r?\n|\s[|•·]\s/).map(z => z.trim()).filter(Boolean);
-  // Deine eigenen Nachrichten (unter „Meine Namen“ eingetragen) nicht auswerten
-  const { zeilen, entfernt } = eigeneZeilenEntfernen(alleZeilen);
+  let zeilen, entfernt;
+  const chat = chatErkennen(alleZeilen, optionen);
+  if (chat) {
+    // Chat mit Kopfzeilen (z. B. ThaiFriendly): deine Fragen → ihre Antworten zuerst
+    for (const qa of chat.antworten) setze(qa.key, qa.wert, qa.beleg);
+    zeilen = chat.ihreZeilen;          // nur ihre Nachrichten weiter auswerten
+    entfernt = chat.meineZeilen;
+    if (chat.ihrName) nickname = chat.ihrName;
+  } else {
+    // Deine eigenen Nachrichten (unter „Meine Namen“ eingetragen) nicht auswerten
+    ({ zeilen, entfernt } = eigeneZeilenEntfernen(alleZeilen));
+  }
   text = zeilen.join('\n');
 
   // 1) „Beschriftung: Wert“ (oder Beschriftung in einer Zeile, Wert in der nächsten)
@@ -275,7 +285,8 @@ export function erkenne(text, optionen = {}) {
     .filter(([k, v]) => ['text', 'ort'].includes(feldDef(k)?.typ || 'text') && v && norm(v).length >= 4)
     .map(([, v]) => norm(v));
   const alleSaetze = zeilen.flatMap(z => z.split(/(?<=[.!?])\s+/)).filter(Boolean);
-  const saetze = alleSaetze.filter(s => !eigeneTexte.some(t => norm(s).includes(t)));
+  // Fragesätze („Do you have a girlfriend?“) sagen nichts über sie aus → nicht auswerten
+  const saetze = alleSaetze.filter(s => !eigeneTexte.some(t => norm(s).includes(t)) && !/[?？]\s*$/.test(s));
   const eigeneSaetze = alleSaetze.length - saetze.length;
   const suche = re => { for (const s of saetze) { const m = s.match(re); if (m) return { m, s }; } return null; };
   let r;
@@ -397,6 +408,140 @@ export function erkenne(text, optionen = {}) {
   return { nickname, name: null, fakten, kontakt: { whatsapp }, sonstiges, eigeneZeilen: entfernt + eigeneSaetze + eigeneWerte };
 }
 
+// ---------- Chats mit Kopfzeilen (z. B. ThaiFriendly: „IhrName1998 Today (Just now)“) ----------
+
+const ZEIT = String.raw`(?:today|yesterday|heute|gestern|just now|\(just now\)|\d{1,2}[:.]\d{2}|\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?|\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}|(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*|\(?\d+\s*(?:min|mins|minutes?|hours?|hrs?|days?)\s+ago\)?)`;
+const KOPF = new RegExp(String.raw`^([\p{L}\p{N}_.\-]{3,30})\s+${ZEIT}\b`, 'iu');
+const NUR_NAME = /^[\p{L}\p{N}_.\-]{3,30}$/u;
+const NUR_ZEIT = new RegExp(String.raw`^${ZEIT}`, 'i');
+const RAUSCHEN = /^(report|mark unread|mark as unread|next message|previous message|unread|read|seen|delivered|sent|translate|show translation|see translation|übersetzen|reply|antworten|like|delete|löschen|block|more)$/i;
+
+function minutenAus(z) {
+  const m = z.match(/\b(\d{1,2})[:.](\d{2})\b/);
+  return m ? +m[1] * 60 + +m[2] : null;
+}
+
+/** Welches Feld fragt deine Frage ab? → { key, invert } (invert: „Hast du einen Freund?“ – Ja heißt nicht single) */
+function frageZuKey(frage) {
+  const q = norm(frage);
+  const direkt = labelZuKey(q);
+  if (direkt && direkt !== 'nickname') return { key: direkt };
+  for (const f of state.felder) {
+    const v = norm(f.frage || '');
+    if (v.length >= 8 && (q.includes(v) || v.includes(q))) return { key: f.key };
+  }
+  const pf = profilFeld();
+  if (pf && /\b(read|understand|understood|verstanden|gelesen|lesen)\b.*\bprofil/.test(q)) return { key: pf.key };
+  const regeln = [
+    [/how old|your age|wie alt/, 'alter'],
+    [/how tall|your height|wie gro(ß|ss)/, 'groesse'],
+    [/weigh|wie schwer/, 'gewicht'],
+    [/children|kids|kinder/, 'kinder'],
+    [/how long.*single|single.*how long|since when.*single|seit wann.*single/, 'single_seit'],
+    [/boyfriend|husband|married|partner|feste?n? freund|verheiratet/, 'single', true],
+    [/single/, 'single'],
+    [/\b(job|work|working|do for (?:a )?living|occupation|beruf|arbeite?s?t?)\b/, 'job'],
+    [/where.*\b(live|stay|from)\b|wo wohnst|woher/, 'wohnort'],
+    [/whats ?app|phone|number|nummer/, 'handy'],
+    [/\bline\b/, 'line_id'],
+  ];
+  for (const [re, key, invert] of regeln) if (re.test(q) && feldDef(key)) return { key, invert: !!invert };
+  return null;
+}
+
+/** Ihre Antwort auf deine Frage deuten. */
+function antwortDeuten(key, invert, a) {
+  const t = a.trim();
+  const typ = feldDef(key)?.typ;
+  if (typ === 'janein') {
+    let w = /^(yes|yeah|yep|yup|ya|ja|of course|sure|already|i did|i do|i have|i am|i'm|i read|i understand|correct|right|ok|okay)\b/i.test(t) ? true
+      : /^(no|nope|not|never|nein|i don'?t|i didn'?t|i haven'?t|i am not|i'?m not)\b/i.test(t) ? false : null;
+    if (key === 'single' && w === null) w = single(t);
+    else if (key === 'single' && /\b(divorced|separated|widow)/i.test(t)) w = !invert;
+    if (w !== null && invert) w = !w;
+    return w;
+  }
+  if (key === 'kinder') return kinder(t) ?? (/^(no|nope|never|not)\b/i.test(t) ? 0 : null);
+  if (key === 'single_seit') return seit(t);
+  if (typ === 'zahl') return deuten(key, t, true);
+  if (key === 'wohnort') {
+    const m = t.match(/(?:live in|stay in|i'?m in|i am in|from|in|at)\s+([^.!?\n]{2,40})/i);
+    const v = textKuerzen(m ? m[1] : t);
+    return v.length <= 40 && /\p{L}{2}/u.test(v) && !/[?？]/.test(t) ? v : null;
+  }
+  if (key === 'job') {
+    const m = t.match(/(?:i(?:'m| am) (?:an? )?|i work (?:as|in|at) (?:an? )?|my job is (?:an? )?|work as (?:an? )?)([^.!?\n]{2,40})/i);
+    const v = textKuerzen(m ? m[1] : t);
+    return v.length <= 40 && /\p{L}{2}/u.test(v) && !/[?？]/.test(t) ? v : null;
+  }
+  return deuten(key, t, true);
+}
+
+/**
+ * Erkennt einen Chat mit Kopfzeilen „Absender Zeit“, trennt deine und ihre Nachrichten und ordnet
+ * deinen Fragen ihre nächste Antwort zu. Liefert null, wenn es kein solcher Chat ist oder unklar ist, wer du bist.
+ */
+function chatErkennen(zeilen, optionen) {
+  const nachrichten = [];
+  let akt = null;
+  for (let i = 0; i < zeilen.length; i++) {
+    const z = zeilen[i];
+    let m = z.match(KOPF);
+    if (!m && NUR_NAME.test(z) && i + 1 < zeilen.length && NUR_ZEIT.test(zeilen[i + 1])) { m = [z, z]; i++; }   // Name und Zeit in zwei Zeilen
+    if (m && labelZuKey(m[1])) m = null;   // „Weight 48.5“ ist keine Kopfzeile
+    if (m) { akt = { sender: m[1], minuten: minutenAus(z), text: [] }; nachrichten.push(akt); continue; }
+    if (!akt || RAUSCHEN.test(z)) continue;
+    akt.text.push(z);
+  }
+  const sender = [...new Set(nachrichten.map(n => n.sender))];
+  if (nachrichten.length < 2 || sender.length < 2) return null;
+
+  const k = s => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const eigene = (state.eigeneNamen || []).map(n => k(String(n).replace(/\s*\([^)]*\)\s*$/, '')));
+  let ich = sender.find(s => eigene.includes(k(s)));
+  if (!ich && optionen.nickname) {
+    const sie = sender.find(s => k(s) === k(optionen.nickname));
+    if (sie && sender.length === 2) ich = sender.find(s => s !== sie);
+  }
+  if (!ich) return null;   // unklar, wer du bist → normale Erkennung (mit Hinweis „Meine Namen“ eintragen)
+
+  // Zeitliche Reihenfolge: ThaiFriendly zeigt die neueste Nachricht oben; Uhrzeiten (falls da) haben Vorrang
+  const zeiten = nachrichten.map(n => n.minuten).filter(x => x !== null);
+  let neuesteOben = optionen.neuesteOben ?? (optionen.richtung === 'oben');
+  if (zeiten.length >= 2 && zeiten[0] !== zeiten[zeiten.length - 1]) neuesteOben = zeiten[0] > zeiten[zeiten.length - 1];
+  const chrono = neuesteOben ? [...nachrichten].reverse() : nachrichten;
+
+  const antworten = [];
+  let offeneFragen = [];
+  for (const n of chrono) {
+    const txt = n.text.join(' ');
+    if (n.sender === ich) {
+      const fragen = txt.split(/(?<=[?？])\s*/).filter(s => /[?？]\s*$/.test(s)).map(s => s.trim());
+      if (fragen.length) offeneFragen = fragen;
+      continue;
+    }
+    if (offeneFragen.length && txt) {
+      for (const f of offeneFragen) {
+        const z = frageZuKey(f);
+        if (!z) continue;
+        const w = antwortDeuten(z.key, z.invert, txt);
+        if (w !== null && w !== undefined && w !== '') antworten.push({ key: z.key, wert: w, beleg: `${f} → ${txt}` });
+      }
+    }
+    offeneFragen = [];
+  }
+
+  const ihre = nachrichten.filter(n => n.sender !== ich);
+  const zaehler = {};
+  for (const n of ihre) zaehler[n.sender] = (zaehler[n.sender] || 0) + 1;
+  return {
+    antworten,
+    ihreZeilen: ihre.flatMap(n => n.text),
+    meineZeilen: nachrichten.filter(n => n.sender === ich).reduce((s, n) => s + n.text.length, 0),
+    ihrName: Object.entries(zaehler).sort((a, b) => b[1] - a[1])[0]?.[0] || '',
+  };
+}
+
 // ---------- Eigene Nachrichten herausfiltern ----------
 
 const kompakt = s => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
@@ -406,7 +551,8 @@ const kopfBereinigen = z => z
   .replace(/\((?:you|du|ich|me|online|offline)\)/gi, ' ')
   .replace(/\b\d{1,2}[.\/]\d{1,2}(?:[.\/]\d{2,4})?,?/g, ' ')
   .replace(/\b\d{1,2}:\d{2}(?:\s*(?:am|pm|uhr))?\b/gi, ' ')
-  .replace(/\b(?:today|yesterday|heute|gestern|online|offline|sent|gesendet|seen|gelesen)\b/gi, ' ')
+  .replace(/\((?:just now|\d+\s*\w+\s+ago)\)/gi, ' ')
+  .replace(/\b(?:today|yesterday|heute|gestern|just now|online|offline|sent|gesendet|seen|gelesen|unread|ungelesen)\b/gi, ' ')
   .replace(/[-–·•:]+\s*$/, '');
 
 /** „Name: Text“ am Zeilenanfang (Chat-Export, auch mit „[Datum, Uhrzeit]“ davor). */

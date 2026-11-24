@@ -319,7 +319,7 @@ export function einfuegenBox(p, { gross = false } = {}) {
     if (!text.trim()) { toast('Bitte zuerst Text einfügen'); return; }
     let roh;
     try {
-      roh = istBlock(text) ? parseBlock(text)[0] : erkenne(text, { richtung: richtungFuer(p.plattform) });
+      roh = istBlock(text) ? parseBlock(text)[0] : erkenne(text, { richtung: richtungFuer(p.plattform), nickname: p.nickname });
     } catch (e) {
       ergebnis.replaceChildren(h('p', { class: 'fehler' }, 'Konnte den Text nicht lesen: ' + e.message));
       return;
