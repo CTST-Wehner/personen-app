@@ -453,12 +453,22 @@ function erfragenBox(p) {
     text.value = fehlend.filter((f, i) => haken[i].checked).map(f => f.frage).join('\n');
   }
   aktualisieren();
+  // Merken, was du gefragt hast – damit kurze Antworten („Yes“, „27“) später zugeordnet werden können (Tinder)
+  const kopieren = async () => {
+    await copyText(text.value);
+    p.gefragt = { zeit: new Date().toISOString(), keys: fehlend.filter((f, i) => haken[i].checked).map(f => f.key) };
+    await speicherePerson(p);
+  };
+  const zuletzt = p.gefragt?.keys?.length
+    ? h('p', { class: 'leise klein' }, `Zuletzt kopiert am ${datumDE(p.gefragt.zeit.slice(0, 10))}: ${p.gefragt.keys.map(k => feldDef(k)?.label || k).join(', ')} – kurze Antworten darauf werden beim Einfügen diesen Fragen zugeordnet.`)
+    : null;
   return h('div', { class: 'box' },
     h('h2', {}, 'Noch erfragen'),
     fehlend.map((f, i) => h('label', { class: 'haken' }, haken[i], `${f.label}: `, h('span', { class: 'leise' }, f.frage))),
     h('p', { class: 'leise klein' }, 'Nachricht (kann vor dem Kopieren angepasst werden):'),
     text,
-    h('div', { class: 'zeile' }, h('button', { class: 'primaer', onclick: () => copyText(text.value) }, 'Kopieren')));
+    h('div', { class: 'zeile' }, h('button', { class: 'primaer', onclick: kopieren }, 'Kopieren')),
+    zuletzt);
 }
 
 function fotoBox(p, speichern) {

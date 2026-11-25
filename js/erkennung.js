@@ -201,6 +201,7 @@ export function erkenne(text, optionen = {}) {
   if (chat) {
     // Chat mit Kopfzeilen (z. B. ThaiFriendly): deine Fragen → ihre Antworten zuerst
     for (const qa of chat.antworten) setze(qa.key, qa.wert, qa.beleg);
+    for (const s of chat.unbekannt) if (!istIgnoriert(s)) sonstiges.push(s);
     zeilen = chat.ihreZeilen;          // nur ihre Nachrichten weiter auswerten
     entfernt = chat.meineZeilen;
     if (chat.ihrName) nickname = chat.ihrName;
@@ -405,7 +406,7 @@ export function erkenne(text, optionen = {}) {
     if (n >= 18 && n <= 99) setze('alter', n, nameAlter[0]);
   }
 
-  return { nickname, name: null, fakten, kontakt: { whatsapp }, sonstiges, eigeneZeilen: entfernt + eigeneSaetze + eigeneWerte };
+  return { nickname, name: null, fakten, kontakt: { whatsapp }, sonstiges, eigeneZeilen: entfernt + eigeneSaetze + eigeneWerte, istChat: !!chat };
 }
 
 // ---------- Chats mit Kopfzeilen (z. B. ThaiFriendly: „IhrName1998 Today (Just now)“) ----------
@@ -449,8 +450,19 @@ function frageZuKey(frage) {
   return null;
 }
 
+/**
+ * Kurze Antwortzeilen (z. B. „Yes“, „27“, „Nurse“) – für Tinder, wo man nur ihre Antworten kopieren kann.
+ * Liefert die Zeilen in der kopierten Reihenfolge (ohne Kopfzeilen, Fragen, Knöpfe, deine Zeilen).
+ */
+export function kurzeAntworten(text) {
+  const eigene = (state.eigeneNamen || []).map(n => norm(String(n).replace(/\s*\([^)]*\)\s*$/, '')));
+  return String(text).split(/\r?\n/).map(z => z.trim())
+    .filter(z => z && z.length <= 40 && !/[?？]\s*$/.test(z) && !RAUSCHEN.test(z) && !KOPF.test(z) && !NUR_ZEIT.test(z)
+      && !eigene.some(n => n && norm(z).includes(n)) && !/^\d{1,2}[:.]\d{2}(\s*(am|pm))?$/i.test(z) && !labelZuKey(z));
+}
+
 /** Ihre Antwort auf deine Frage deuten. */
-function antwortDeuten(key, invert, a) {
+export function antwortDeuten(key, invert, a) {
   const t = a.trim();
   const typ = feldDef(key)?.typ;
   if (typ === 'janein') {
@@ -512,6 +524,7 @@ function chatErkennen(zeilen, optionen) {
   const chrono = neuesteOben ? [...nachrichten].reverse() : nachrichten;
 
   const antworten = [];
+  const unbekannt = [];
   let offeneFragen = [];
   for (const n of chrono) {
     const txt = n.text.join(' ');
@@ -523,7 +536,11 @@ function chatErkennen(zeilen, optionen) {
     if (offeneFragen.length && txt) {
       for (const f of offeneFragen) {
         const z = frageZuKey(f);
-        if (!z) continue;
+        if (!z) {
+          // Frage passt zu keinem Feld → dir zur Auswahl stellen („Do you smoke: Sometimes“)
+          if (offeneFragen.length === 1 && txt.length <= 80) unbekannt.push(`${f.replace(/[\s?？]+$/, '')}: ${txt}`);
+          continue;
+        }
         const w = antwortDeuten(z.key, z.invert, txt);
         if (w !== null && w !== undefined && w !== '') antworten.push({ key: z.key, wert: w, beleg: `${f} → ${txt}` });
       }
@@ -536,6 +553,7 @@ function chatErkennen(zeilen, optionen) {
   for (const n of ihre) zaehler[n.sender] = (zaehler[n.sender] || 0) + 1;
   return {
     antworten,
+    unbekannt,
     ihreZeilen: ihre.flatMap(n => n.text),
     meineZeilen: nachrichten.filter(n => n.sender === ich).reduce((s, n) => s + n.text.length, 0),
     ihrName: Object.entries(zaehler).sort((a, b) => b[1] - a[1])[0]?.[0] || '',

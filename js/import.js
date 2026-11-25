@@ -2,7 +2,7 @@
 import { state, wert, setzeFakt, speicherePerson, neuePerson, feldDef, speichereFelder, speichereIgnorieren } from './store.js';
 import { h, toast, normTelefon, telefonGleich, parseWert, gleich, formatWert, heute, geheZu, neuZeichnen } from './util.js';
 import { feldBearbeitenDialog } from './felder.js';
-import { erkenne, istBlock, istIgnoriert, richtungFuer, eigeneAngabeArt } from './erkennung.js';
+import { erkenne, istBlock, istIgnoriert, richtungFuer, eigeneAngabeArt, kurzeAntworten, antwortDeuten } from './erkennung.js';
 import { plattformAuswahl, plattformVorschlag } from './plattform.js';
 import { fotoHinzufuegen, bilderAusEinfuegen, bilderAusZwischenablage } from './fotos.js';
 
@@ -257,7 +257,9 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '', festeZielId = null) {
           h('button', { type: 'button', onclick: () => {
             const m = s.match(/^([^:]{1,30}):\s*(.+)$/);
             const label = m ? m[1].trim() : '';
-            alsFeldAnlegen({ key: '', label, typ: m && /^\s*-?\d+([.,]\d+)?\s*$/.test(m[2]) ? 'zahl' : 'text', frage: '', woerter: label }, s);
+            // War es deine Frage („Do you smoke: Sometimes“)? Dann gleich als Frage-Vorlage speichern
+            const istFrage = /^(do|does|did|are|is|have|has|what|where|how|can|could|will|would|when|why|which|who)\b/i.test(label);
+            alsFeldAnlegen({ key: '', label, typ: m && /^\s*-?\d+([.,]\d+)?\s*$/.test(m[2]) ? 'zahl' : /^(yes|no|yeah|nope)\b/i.test(m?.[2] || '') ? 'janein' : 'text', frage: istFrage ? label + '?' : '', woerter: label }, s);
           } }, 'Als Feld aufnehmen'),
           h('button', { type: 'button', onclick: () => {
             // Bei „Beschriftung: Wert“ die Beschriftung merken (gilt dann für jeden Wert), sonst den ganzen Text
@@ -307,6 +309,63 @@ function importKarte(imp, alleNeuZeichnen, vorschlag = '', festeZielId = null) {
   return { el, render, anwenden, pruefen };
 }
 
+// ---------------- Kurze Antworten einem Feld zuordnen (Tinder: nur ihre Antworten kopierbar) ----------------
+
+/**
+ * Zeigt kurze Antwortzeilen („Yes“, „27“, „Nurse“) mit Auswahl „gehört zu …“.
+ * Vorausgefüllt in der Reihenfolge der Fragen, die du zuletzt unter „Noch erfragen“ kopiert hast.
+ */
+function antwortenZuordnen(p, text, imp) {
+  const belege = Object.values(imp.werte).map(w => String(w.beleg || '').toLowerCase()).concat(imp.sonstiges.map(s => s.toLowerCase()));
+  const zeilen = kurzeAntworten(text).filter(z => !belege.some(b => b.includes(z.toLowerCase())));
+  if (!zeilen.length) return null;
+
+  // Vorschlag: deine zuletzt gestellten Fragen der Reihe nach (nur solche, die noch fehlen)
+  const offen = (p.gefragt?.keys || []).filter(k => feldDef(k) && wert(p, k) === null && !imp.werte[k]);
+  const benutzt = new Set();
+  const vorschlag = zeilen.map(z => {
+    const k = offen.find(k => !benutzt.has(k) && antwortDeuten(k, false, z) != null);
+    if (k) benutzt.add(k);
+    return k || '';
+  });
+
+  const zeilenEls = zeilen.map((z, i) => {
+    const vorschau = h('span', { class: 'leise klein' });
+    const sel = h('select', {},
+      h('option', { value: '' }, '– nicht zuordnen –'),
+      state.felder.map(f => h('option', { value: f.key }, f.label)));
+    sel.value = vorschlag[i];
+    const zeigen = () => {
+      if (!sel.value) { vorschau.textContent = ''; return; }
+      const w = antwortDeuten(sel.value, false, z);
+      vorschau.textContent = w === null || w === undefined ? '⚠️ passt nicht zu diesem Feld' : `→ ${formatWert(feldDef(sel.value), w)}`;
+    };
+    sel.addEventListener('change', zeigen);
+    zeigen();
+    return { z, sel, el: h('div', { class: 'imp-zeile' }, h('strong', {}, `„${z}“`), h('div', {}, h('span', { class: 'leise klein' }, 'gehört zu: '), sel, ' ', vorschau)) };
+  });
+
+  const el = h('div', { class: 'box' },
+    h('h2', {}, '❓ Kurze Antworten zuordnen'),
+    h('p', { class: 'leise klein' }, offen.length
+      ? 'Vorausgewählt nach deinen zuletzt kopierten Fragen (der Reihe nach). Bitte prüfen und ggf. ändern.'
+      : 'Wozu gehört die Antwort? Feld auswählen – oder „nicht zuordnen“ lassen. Tipp: Fragen unter „Noch erfragen“ kopieren, dann ordnet die App das nächste Mal selbst zu.'),
+    zeilenEls.map(x => x.el));
+
+  return {
+    el,
+    anwenden(person) {
+      for (const { z, sel } of zeilenEls) {
+        if (!sel.value) continue;
+        const w = antwortDeuten(sel.value, false, z);
+        if (w === null || w === undefined || w === '') continue;
+        setzeFakt(person, sel.value, w, z);
+        if (person.gefragt?.keys) person.gefragt.keys = person.gefragt.keys.filter(k => k !== sel.value);
+      }
+    },
+  };
+}
+
 // ---------------- Feld „Text einfügen“ direkt in einer Person ----------------
 
 /** Box für die Personenseite: Text hineinkopieren → Angaben werden in diese Person sortiert. */
@@ -329,15 +388,19 @@ export function einfuegenBox(p, { gross = false } = {}) {
     const n = Object.keys(imp.werte).length;
     let karte;
     karte = importKarte(imp, () => karte.render(), '', p.id);
+    // Nur wenn kein Chat mit Absendern erkannt wurde (dort ordnet die App Frage/Antwort schon selbst zu)
+    const zuordnung = istBlock(text) || roh.istChat ? null : antwortenZuordnen(p, text, imp);
     const speichern = h('button', { class: 'primaer', onclick: async () => {
       speichern.disabled = true;
       await karte.anwenden();
+      if (zuordnung) { zuordnung.anwenden(p); await speicherePerson(p); }
       toast('Angaben übernommen');
       neuZeichnen();
     } }, 'Ausgewähltes übernehmen');
     ergebnis.replaceChildren(
       h('p', { class: 'leise klein' }, (n ? `${n} Angabe(n) gefunden.` : 'Keine bekannten Angaben gefunden.') + (roh.eigeneZeilen ? ` ${roh.eigeneZeilen} Zeile(n) von dir ignoriert.` : '')),
       karte.el,
+      zuordnung?.el,
       h('div', { class: 'zeile' }, speichern, h('button', { onclick: () => { ergebnis.replaceChildren(); } }, 'Verwerfen')));
   }
 
