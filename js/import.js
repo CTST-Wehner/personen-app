@@ -320,8 +320,12 @@ function antwortenZuordnen(p, text, imp) {
   const zeilen = kurzeAntworten(text).filter(z => !belege.some(b => b.includes(z.toLowerCase())));
   if (!zeilen.length) return null;
 
-  // Vorschlag: deine zuletzt gestellten Fragen der Reihe nach (nur solche, die noch fehlen)
-  const offen = (p.gefragt?.keys || []).filter(k => feldDef(k) && wert(p, k) === null && !imp.werte[k]);
+  // Vorschlag: deine zuletzt kopierten Fragen der Reihe nach – sonst die fehlenden Felder in deiner Felder-Reihenfolge
+  // (wenn du immer im selben Ablauf fragst, passt das)
+  const gefragt = (p.gefragt?.keys || []).filter(k => feldDef(k) && wert(p, k) === null && !imp.werte[k]);
+  const nachReihenfolge = !gefragt.length;
+  const offen = gefragt.length ? gefragt
+    : state.felder.filter(f => f.frage && wert(p, f.key) === null && !imp.werte[f.key]).map(f => f.key);
   const benutzt = new Set();
   const vorschlag = zeilen.map(z => {
     const k = offen.find(k => !benutzt.has(k) && antwortDeuten(k, false, z) != null);
@@ -347,9 +351,9 @@ function antwortenZuordnen(p, text, imp) {
 
   const el = h('div', { class: 'box' },
     h('h2', {}, '❓ Kurze Antworten zuordnen'),
-    h('p', { class: 'leise klein' }, offen.length
+    h('p', { class: 'leise klein' }, !nachReihenfolge
       ? 'Vorausgewählt nach deinen zuletzt kopierten Fragen (der Reihe nach). Bitte prüfen und ggf. ändern.'
-      : 'Wozu gehört die Antwort? Feld auswählen – oder „nicht zuordnen“ lassen. Tipp: Fragen unter „Noch erfragen“ kopieren, dann ordnet die App das nächste Mal selbst zu.'),
+      : 'Vorschlag nach der Reihenfolge deiner Felder (falls du immer im selben Ablauf fragst). Bitte prüfen und ggf. ändern. Genauer wird es, wenn du die Fragen unter „Noch erfragen“ kopierst.'),
     zeilenEls.map(x => x.el));
 
   return {
